@@ -26,3 +26,7 @@ yarn build
 ```
 
 Builds the app for production to the `build/` folder.
+
+## Deployment
+
+Pushes to `master` run through GitHub Actions (`.github/workflows/deploy.yml`): the React app is built to catch failures early, then the production server pulls and rebuilds via `docker compose up -d --build`.
