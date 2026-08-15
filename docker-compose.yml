@@ -51,15 +51,17 @@ services:
     networks: [backend]
 
   react:
-    build: .
+    build:
+      context: .
+      args:
+        REACT_APP_MCP_CONNECTOR_URL: ${REACT_APP_MCP_CONNECTOR_URL:-http://localhost:3002}
+        REACT_APP_CHART_SERVER_URL: ${REACT_APP_CHART_SERVER_URL:-http://localhost:3000}
     image: ict-cron-manager:local
     container_name: ict-cron-manager
     ports:
       - "3001:3001"
     environment:
       PORT: 3001
-      REACT_APP_MCP_CONNECTOR_URL: http://localhost:3002
-      REACT_APP_CHART_SERVER_URL: http://localhost:3000
     depends_on: [charts, connector]
     restart: unless-stopped
     networks: [backend]
