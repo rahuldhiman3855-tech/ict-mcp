@@ -1,0 +1,44 @@
+//
+// _badge.scss
+//
+
+.rounded-pill {
+  padding-left: 0.6em;
+  padding-right: 0.6em; /*rtl:left*/
+}
+
+// Soft badge
+@mixin badge-variant-soft($bg) {
+  color: $bg;
+  background-color: rgba($bg, 0.18);
+
+  // &[href] {
+  //   @include hover-focus {
+  //     color: $bg;
+  //     text-decoration: none;
+  //     background-color: rgba($bg, 0.4);
+  //   }
+  // }
+}
+
+@each $color, $value in $theme-colors {
+  .badge-soft-#{$color} {
+    @include badge-variant-soft($value);
+  }
+}
+
+// Bootstrap 4 -> 5 compatibility.
+//
+// reactstrap 8's <Badge color="x"> still emits `.badge-x`, which Bootstrap 5
+// dropped in favour of `.bg-x`. Nothing then sets a background, so `.badge`'s
+// white text renders on the parent's white card — invisible. Restoring the
+// variants here fixes every <Badge> in the app at once.
+// The theme's global $min-contrast-ratio is 1.8, which lets color-contrast()
+// settle for white on mid-tone greens and blues. Badge text is small, so ask
+// for the 4.5 AA threshold here rather than loosening it app-wide.
+@each $color, $value in $theme-colors {
+  .badge-#{$color} {
+    background-color: $value;
+    color: color-contrast($value, $color-contrast-dark, $color-contrast-light, 4.5);
+  }
+}

@@ -1,0 +1,90 @@
+<svg width="420" height="120" viewBox="0 0 420 120" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1677FF"/>
+      <stop offset="100%" stop-color="#0052CC"/>
+    </linearGradient>
+
+    <linearGradient id="orange" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FF9D24"/>
+      <stop offset="100%" stop-color="#FF6B00"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Icon -->
+  <g transform="translate(10,10)">
+    <!-- Outer scheduler ring -->
+    <circle
+      cx="50"
+      cy="50"
+      r="39"
+      fill="none"
+      stroke="url(#blue)"
+      stroke-width="7"
+      stroke-linecap="round"
+      stroke-dasharray="205 40"
+    />
+
+    <!-- Clock face -->
+    <circle
+      cx="50"
+      cy="50"
+      r="29"
+      fill="none"
+      stroke="url(#blue)"
+      stroke-width="3"
+    />
+
+    <!-- Clock ticks -->
+    <path d="M50 21V27" stroke="#1677FF" stroke-width="4" stroke-linecap="round"/>
+    <path d="M50 73V79" stroke="#1677FF" stroke-width="4" stroke-linecap="round"/>
+    <path d="M21 50H27" stroke="#1677FF" stroke-width="4" stroke-linecap="round"/>
+    <path d="M73 50H79" stroke="#1677FF" stroke-width="4" stroke-linecap="round"/>
+
+    <!-- Clock hands / check -->
+    <path
+      d="M34 50 L46 62 L69 37"
+      fill="none"
+      stroke="url(#orange)"
+      stroke-width="8"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+
+    <!-- Network nodes -->
+    <line x1="75" y1="25" x2="88" y2="17"
+          stroke="#1677FF" stroke-width="3"/>
+    <circle cx="91" cy="15" r="7" fill="url(#blue)"/>
+
+    <line x1="76" y1="75" x2="89" y2="84"
+          stroke="#1677FF" stroke-width="3"/>
+    <circle cx="93" cy="87" r="7" fill="url(#blue)"/>
+
+    <!-- Orange scheduler node -->
+    <line x1="25" y1="25" x2="15" y2="16"
+          stroke="#FF7A00" stroke-width="3"/>
+    <circle cx="12" cy="13" r="7" fill="url(#orange)"/>
+  </g>
+
+  <!-- ICT -->
+  <text
+    x="115"
+    y="70"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="48"
+    font-weight="800"
+    fill="#075BC5">
+    ICT
+  </text>
+
+  <!-- Cron -->
+  <text
+    x="215"
+    y="70"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="48"
+    font-weight="800"
+    fill="#FF7900">
+    Cron
+  </text>
+</svg>

@@ -1,0 +1,8 @@
+node_modules
+snapshots
+dump1
+dump2
+.backup
+npm-debug.log
+.git
+README.md

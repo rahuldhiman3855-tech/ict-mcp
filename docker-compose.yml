@@ -1,0 +1,73 @@
+services:
+  charts:
+    build: ./backend/charts
+    image: ict-cron-charts:local
+    container_name: ict-cron-charts
+    # Published port: React dashboard loads snapshots from here.
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: 3000
+      SNAPSHOT_TTL_MS: ${SNAPSHOT_TTL_MS:-604800000}
+      MAX_CONCURRENT_RENDERS: 3
+      TV_AUTH_TOKEN: ${TV_AUTH_TOKEN:-}
+    volumes:
+      - chart-snapshots:/app/snapshots
+    shm_size: 512mb
+    restart: unless-stopped
+    networks: [backend]
+
+  connector:
+    build: ./backend/connector
+    image: ict-cron-connector:local
+    container_name: ict-cron-connector
+    # Published port: external MCP clients and React dashboard call this.
+    ports:
+      - "3002:3002"
+    environment:
+      PORT: 3002
+      CHART_SERVER_URL: http://charts:3000
+      DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:?set DEEPINFRA_API_KEY in .env}
+      DEEPINFRA_MODEL: ${DEEPINFRA_MODEL:-deepseek-ai/DeepSeek-V3}
+      DEEPINFRA_VISION_MODEL: ${DEEPINFRA_VISION_MODEL:-Qwen/Qwen2.5-VL-32B-Instruct}
+      ENABLE_SCHEDULER: ${ENABLE_SCHEDULER:-true}
+      RUN_INTERVAL_MS: ${RUN_INTERVAL_MS:-3600000}
+      MAX_SYMBOLS_PER_RUN: ${MAX_SYMBOLS_PER_RUN:-6}
+      NOTIFY_MIN_CONFIDENCE: ${NOTIFY_MIN_CONFIDENCE:-0.6}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      WEBHOOK_URL: ${WEBHOOK_URL:-}
+      DB_HOST: ${DB_HOST:?set DB_HOST in .env}
+      DB_PORT: ${DB_PORT:-3306}
+      DB_USER: ${DB_USER:?set DB_USER in .env}
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      DB_NAME: ${DB_NAME:?set DB_NAME in .env}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+    volumes:
+      - connector-data:/app/data
+      - ./backend/connector/watchlist.json:/app/watchlist.json:ro
+    depends_on: [charts]
+    restart: unless-stopped
+    networks: [backend]
+
+  react:
+    build: .
+    image: ict-cron-manager:local
+    container_name: ict-cron-manager
+    ports:
+      - "3001:3001"
+    environment:
+      PORT: 3001
+      REACT_APP_MCP_CONNECTOR_URL: http://localhost:3002
+      REACT_APP_CHART_SERVER_URL: http://localhost:3000
+    depends_on: [charts, connector]
+    restart: unless-stopped
+    networks: [backend]
+
+volumes:
+  chart-snapshots:
+  connector-data:
+
+networks:
+  backend:
+    driver: bridge
