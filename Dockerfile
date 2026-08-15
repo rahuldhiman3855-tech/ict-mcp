@@ -9,6 +9,7 @@ RUN npm ci --legacy-peer-deps
 COPY public ./public
 COPY src ./src
 
+ENV GENERATE_SOURCEMAP=false
 RUN npm run build
 
 FROM node:22-slim
