@@ -213,4 +213,30 @@ function mergeBars(existing, incoming) {
   return [...byTime.values()].sort((a, b) => a.time - b.time);
 }
 
-module.exports = { fetchBars, normalizeInterval, normalizeSymbol };
+// ------------------------------------------------------------------- search
+
+/**
+ * Symbol search against TradingView's unofficial public search endpoint.
+ * Same category as the socket feed above: undocumented, can change without
+ * notice, no auth required for basic results.
+ */
+async function searchSymbols(query, limit = 20) {
+  const q = String(query || '').trim();
+  if (!q) return [];
+
+  const url = `https://symbol-search.tradingview.com/symbol_search/?text=${encodeURIComponent(q)}&limit=${limit}`;
+  const res = await fetch(url, { headers: { origin: ORIGIN } });
+  if (!res.ok) throw new Error(`symbol search failed: ${res.status}`);
+
+  const raw = await res.json();
+  if (!Array.isArray(raw)) return [];
+
+  return raw.slice(0, limit).map((r) => ({
+    symbol: `${r.exchange}:${r.symbol}`,
+    label: String(r.description || r.symbol || '').replace(/<\/?[^>]+>/g, ''),
+    exchange: r.exchange || '',
+    type: r.type || '',
+  }));
+}
+
+module.exports = { fetchBars, normalizeInterval, normalizeSymbol, searchSymbols };

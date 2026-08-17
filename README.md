@@ -13,9 +13,12 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 
 ## Features
 
-- **Workflows**: Manage workflow definitions and triggers
-- **Agents**: Monitor MCP agents (e.g., TradingView MCP) connection status and capabilities
-- **Crons**: View and manage cron jobs with multi-symbol support
+- **Workflows**: Run the mechanical trend-following algorithm on demand and inspect its per-stage trace
+- **Agents**: View the pipeline's stages and their current tunable parameters
+- **Crons**: Watchlist overview, scheduler status, and quick manual runs
+- **Watchlist**: Search and manage tracked symbols; toggle which ones the algorithm actively trades
+- **Health**: Connector/chart-server/scheduler status
+- **Settings**: Telegram alerts, account equity, and the algorithm's risk/exit parameters
 - **Analytics**: Track execution metrics and performance charts
 - **Logs**: Filter and inspect execution logs
 

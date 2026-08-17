@@ -108,16 +108,37 @@ const SidebarContent = props => {
             </li>
 
             <li>
-              <Link to="/analytics" className="waves-effect">
-                <i className="mdi mdi-chart-line"></i>
-                <span>{props.t("Analytics")}</span>
+              <Link to="/logs" className="waves-effect">
+                <i className="mdi mdi-file-document-outline"></i>
+                <span>{props.t("Logs")}</span>
               </Link>
             </li>
 
             <li>
-              <Link to="/logs" className="waves-effect">
-                <i className="mdi mdi-file-document-outline"></i>
-                <span>{props.t("Logs")}</span>
+              <Link to="/health" className="waves-effect">
+                <i className="mdi mdi-heart-pulse"></i>
+                <span>{props.t("Health")}</span>
+              </Link>
+            </li>
+
+            <li>
+              <Link to="/subscription" className="waves-effect">
+                <i className="mdi mdi-bell-outline"></i>
+                <span>{props.t("Subscription")}</span>
+              </Link>
+            </li>
+
+            <li>
+              <Link to="/mcp-config" className="waves-effect">
+                <i className="mdi mdi-server-network"></i>
+                <span>{props.t("MCP Config")}</span>
+              </Link>
+            </li>
+
+            <li>
+              <Link to="/settings" className="waves-effect">
+                <i className="mdi mdi-cog-outline"></i>
+                <span>{props.t("Settings")}</span>
               </Link>
             </li>
           </ul>

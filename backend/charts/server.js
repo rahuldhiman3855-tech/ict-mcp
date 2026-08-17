@@ -288,6 +288,14 @@ app.post('/api/charts/batch', async (req, res) => {
 
 app.get('/api/studies', (_req, res) => res.json({ supported: studies.supported() }));
 
+app.get('/api/symbols/search', async (req, res) => {
+  try {
+    res.json({ results: await tv.searchSymbols(req.query.q, 20) });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
 app.get('/api/health', (_req, res) =>
   res.json({ ok: true, uptimeSec: Math.round(process.uptime()), activeRenders: active, queued: waiting.length }));
 

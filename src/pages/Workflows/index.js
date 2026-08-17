@@ -1,387 +1,335 @@
-import React, { useState, useEffect, useCallback, useRef } from "react"
+import React, { useState, useEffect } from "react"
 import {
-  Container, Row, Col, Card, CardBody, Button, Spinner, Alert, Input, Progress,
+  Container, Row, Col, Card, CardBody, Badge, Button, Spinner, Alert,
+  Modal, ModalHeader, ModalBody, ModalFooter, Form, FormGroup, Label, Input,
 } from "reactstrap"
+import Breadcrumb from "../../components/Common/Breadcrumb"
+import ChartLightbox from "../../components/Common/ChartLightbox"
 import {
-  getWorkflow, getWatchlist, prepareRun, executeAgent, chartUrl,
-  createCancelSource, isCancel,
+  listWorkflows, createWorkflow, updateWorkflow, deleteWorkflow, runWorkflow,
+  listAgents, checkSymbol, getSymbolSignals, chartUrl,
 } from "../../helpers/connector_helper"
 
-/**
- * Group nodes into levels that can run in parallel: everything whose parents
- * have already run goes in the same level. Mirrors the connector's own
- * workflowEngine so the canvas and the scheduler execute the graph identically.
- */
-function topologicalLevels(nodeIds, edges) {
-  const indegree = new Map(nodeIds.map(id => [id, 0]))
-  const children = new Map(nodeIds.map(id => [id, []]))
+const EMPTY_FORM = { name: "", symbol: "", agentIds: [], cronExpression: "", enabled: true }
 
-  edges.forEach(e => {
-    if (!indegree.has(e.target) || !children.has(e.source)) return
-    indegree.set(e.target, indegree.get(e.target) + 1)
-    children.get(e.source).push(e.target)
-  })
-
-  const levels = []
-  let frontier = nodeIds.filter(id => indegree.get(id) === 0)
-  const seen = new Set()
-
-  while (frontier.length) {
-    levels.push(frontier)
-    frontier.forEach(id => seen.add(id))
-    const next = []
-    frontier.forEach(id => {
-      children.get(id).forEach(child => {
-        indegree.set(child, indegree.get(child) - 1)
-        if (indegree.get(child) === 0 && !seen.has(child)) next.push(child)
-      })
-    })
-    frontier = [...new Set(next)]
-  }
-
-  // A cycle would strand nodes; run them last rather than dropping them.
-  const stranded = nodeIds.filter(id => !seen.has(id))
-  if (stranded.length) levels.push(stranded)
-  return levels
-}
-
-/** The decision agent answers in JSON, sometimes inside a code fence. */
-function parseVerdict(raw) {
-  if (!raw) return null
-  const cleaned = String(raw).replace(/^```(?:json)?/gm, "").replace(/```$/gm, "").trim()
-  const start = cleaned.indexOf("{")
-  const end = cleaned.lastIndexOf("}")
-  if (start === -1 || end === -1) return null
-  try {
-    return JSON.parse(cleaned.slice(start, end + 1))
-  } catch (err) {
-    return null
+const getVerdictBadge = (verdict) => {
+  if (!verdict) return <Badge color="secondary">—</Badge>
+  switch (verdict) {
+    case "BUY": return <Badge color="success">BUY</Badge>
+    case "SELL": return <Badge color="danger">SELL</Badge>
+    case "HOLD": return <Badge color="info">HOLD</Badge>
+    default: return <Badge color="secondary">{verdict}</Badge>
   }
 }
 
-const STATUS_COLOR = { idle: "secondary", running: "info", done: "success", error: "danger" }
-const VERDICT_COLOR = { BUY: "success", SELL: "danger", HOLD: "warning" }
-
-/**
- * reactstrap 8 still emits Bootstrap 4's `badge-*` classes, which Bootstrap 5
- * replaced with `bg-*` — its <Badge> renders white-on-white here. Plain spans
- * with the v5 classes are the reliable option.
- */
-const Pill = ({ color, children, className = "" }) => (
-  <span
-    className={`badge bg-${color} ${color === "warning" ? "text-dark" : ""} ${className}`}
-  >
-    {children}
-  </span>
-)
+const STATUS_ICON = {
+  ok: { icon: "mdi-check-circle", color: "text-success" },
+  error: { icon: "mdi-alert-circle", color: "text-danger" },
+}
 
 const Workflows = () => {
+  const [workflows, setWorkflows] = useState([])
   const [agents, setAgents] = useState([])
-  const [edges, setEdges] = useState([])
-  const [symbols, setSymbols] = useState([])
-  const [symbol, setSymbol] = useState("")
-  const [prepared, setPrepared] = useState(null)
-  const [state, setState] = useState({})       // agentId -> {status, output, latency, tokenCount, error}
   const [loading, setLoading] = useState(true)
-  const [preparing, setPreparing] = useState(false)
-  const [running, setRunning] = useState(false)
   const [error, setError] = useState(null)
-  const [expanded, setExpanded] = useState({})
-  const abortRef = useRef(null)
 
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const [wf, wl] = await Promise.all([getWorkflow(), getWatchlist()])
-        setAgents(wf.agents || [])
-        setEdges(wf.edges || [])
-        setSymbols(wl.symbols || [])
-        if (wl.symbols?.length) setSymbol(wl.symbols[0].symbol)
-      } catch (err) {
-        setError(err.response?.data?.error || err.message)
-      } finally {
-        setLoading(false)
-      }
-    }
-    load()
-  }, [])
+  const [editing, setEditing] = useState(null)
+  const [form, setForm] = useState(EMPTY_FORM)
+  const [saving, setSaving] = useState(false)
+  const [checking, setChecking] = useState(false)
+  const [checkResult, setCheckResult] = useState(null)
 
-  // Cancel any in-flight run if the page unmounts mid-execution.
-  useEffect(() => () => abortRef.current?.cancel("unmounted"), [])
+  const [running, setRunning] = useState(null) // workflow id currently running
+  const [runResult, setRunResult] = useState(null)
+  const [lightboxUrl, setLightboxUrl] = useState(null)
 
-  const handleLoad = useCallback(async () => {
-    setPreparing(true)
-    setError(null)
-    setPrepared(null)
-    setState({})
+  const load = async () => {
     try {
-      const run = await prepareRun(symbol)
-      setPrepared(run)
-      setAgents(run.agents)
-      setEdges(run.edges || [])
-      setState(Object.fromEntries(run.agents.map(a => [a.id, { status: "idle" }])))
+      setLoading(true)
+      const [wf, ag] = await Promise.all([listWorkflows(), listAgents()])
+      setWorkflows(wf.workflows || [])
+      setAgents(ag.agents || [])
+      setError(null)
     } catch (err) {
-      setError(err.response?.data?.error || err.message)
+      setError(err.message)
     } finally {
-      setPreparing(false)
+      setLoading(false)
     }
-  }, [symbol])
+  }
 
-  const handleRun = useCallback(async () => {
-    if (!prepared) return
-    const source = createCancelSource()
-    abortRef.current = source
+  useEffect(() => { load() }, [])
 
-    setRunning(true)
-    setError(null)
-    setState(Object.fromEntries(prepared.agents.map(a => [a.id, { status: "idle" }])))
+  const openNew = () => { setForm(EMPTY_FORM); setCheckResult(null); setEditing({}) }
+  const openEdit = (wf) => {
+    setForm({
+      name: wf.name,
+      symbol: wf.symbol,
+      agentIds: wf.agent_ids,
+      cronExpression: wf.cron_expression || "",
+      enabled: wf.enabled,
+    })
+    setCheckResult({ ok: true })
+    setEditing(wf)
+  }
+  const close = () => setEditing(null)
 
-    const byId = new Map(prepared.agents.map(a => [a.id, a]))
-    const levels = topologicalLevels(prepared.agents.map(a => a.id), prepared.edges || [])
-    const outputs = {}
+  const handleChange = (e) => {
+    const { name, type, checked, value } = e.target
+    if (name === "symbol") setCheckResult(null)
+    setForm({ ...form, [name]: type === "checkbox" ? checked : value })
+  }
 
-    let cancelled = false
+  const handleCheckSymbol = async () => {
+    if (!form.symbol.trim()) return
     try {
-      for (const level of levels) {
-        if (cancelled) break
-
-        await Promise.all(level.map(async id => {
-          const agent = byId.get(id)
-          if (!agent) return
-
-          // Feed this node its parents' outputs; roots get the run's brief.
-          const parents = (prepared.edges || [])
-            .filter(e => e.target === id)
-            .map(e => outputs[e.source])
-            .filter(Boolean)
-          const input = parents.length ? parents.join("\n\n---\n\n") : prepared.userInput
-
-          setState(s => ({ ...s, [id]: { status: "running" } }))
-          try {
-            const data = await executeAgent(agent, input, source.token)
-            const output = data.output || ""
-            if (!output.trim()) throw new Error("Model returned an empty response")
-            outputs[id] = output
-            setState(s => ({
-              ...s,
-              [id]: {
-                status: "done",
-                output,
-                latency: data.latency,
-                tokenCount: data.tokenCount,
-                model: data.model,
-              },
-            }))
-          } catch (err) {
-            if (isCancel(err)) {
-              cancelled = true
-              setState(s => ({ ...s, [id]: { status: "idle" } }))
-              return
-            }
-            setState(s => ({
-              ...s,
-              [id]: { status: "error", error: err.response?.data?.error || err.message },
-            }))
-          }
-        }))
-      }
+      setChecking(true)
+      const result = await checkSymbol(form.symbol.trim().toUpperCase())
+      setCheckResult(result)
+    } catch (err) {
+      setCheckResult({ ok: false, error: err.message })
     } finally {
-      setRunning(false)
-      abortRef.current = null
+      setChecking(false)
     }
-  }, [prepared])
+  }
 
-  const handleStop = useCallback(() => {
-    abortRef.current?.cancel("stopped by user")
-    setRunning(false)
-  }, [])
+  const toggleAgent = (id) => {
+    setForm((f) => ({
+      ...f,
+      agentIds: f.agentIds.includes(id) ? f.agentIds.filter((a) => a !== id) : [...f.agentIds, id],
+    }))
+  }
 
-  if (loading) return <div className="page-content"><Container fluid><Spinner /></Container></div>
+  const moveAgent = (id, dir) => {
+    setForm((f) => {
+      const ids = [...f.agentIds]
+      const i = ids.indexOf(id)
+      const j = i + dir
+      if (i < 0 || j < 0 || j >= ids.length) return f
+      ;[ids[i], ids[j]] = [ids[j], ids[i]]
+      return { ...f, agentIds: ids }
+    })
+  }
 
-  const done = Object.values(state).filter(s => s.status === "done").length
-  const total = agents.length
-  const verdict = parseVerdict(state.decision?.output)
-  const totalTokens = Object.values(state).reduce((n, s) => n + (s.tokenCount || 0), 0)
+  const mechanicalError = (() => {
+    const idx = form.agentIds.indexOf(0)
+    if (idx !== -1 && idx !== form.agentIds.length - 1) {
+      return "The mechanical agent must be the last step in the workflow."
+    }
+    return null
+  })()
+
+  const handleSave = async (e) => {
+    e.preventDefault()
+    if (!checkResult?.ok) {
+      setError("Check the symbol before saving.")
+      return
+    }
+    if (mechanicalError) {
+      setError(mechanicalError)
+      return
+    }
+    try {
+      setSaving(true)
+      setError(null)
+      const payload = { ...form, symbol: form.symbol.trim().toUpperCase() }
+      if (editing?.id) await updateWorkflow(editing.id, payload)
+      else await createWorkflow(payload)
+      close()
+      await load()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleDelete = async (wf) => {
+    try {
+      await deleteWorkflow(wf.id)
+      await load()
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
+  const handleRun = async (wf) => {
+    try {
+      setRunning(wf.id)
+      setRunResult(null)
+      const before = Date.now()
+      await runWorkflow(wf.id)
+
+      // Poll for the new signal record — the run is fire-and-forget server-side.
+      for (let i = 0; i < 20; i++) {
+        await new Promise((r) => setTimeout(r, 2000))
+        const data = await getSymbolSignals(wf.symbol)
+        const fresh = (data.signals || []).find((s) => new Date(s.at).getTime() >= before)
+        if (fresh) { setRunResult(fresh); break }
+      }
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setRunning(null)
+    }
+  }
+
+  if (loading) return <Spinner />
 
   return (
     <React.Fragment>
       <div className="page-content">
         <Container fluid>
+          <Breadcrumb title="Dashboard" breadcrumbItem="Workflows" />
+
+          {error && <Alert color="danger">{error}</Alert>}
+
           <Row className="mb-3">
-            <Col sm="12">
-              <div className="page-title-box d-sm-flex align-items-center justify-content-between">
-                <div>
-                  <h4 className="mb-0">Workflow Run</h4>
-                  <small className="text-muted">
-                    {total} agents, {edges.length} edges
-                    {prepared && ` · ${prepared.label}`}
-                    {totalTokens > 0 && ` · ${totalTokens.toLocaleString()} tokens`}
-                  </small>
-                </div>
-                <div className="d-flex align-items-center gap-2">
-                  <Input
-                    type="select"
-                    value={symbol}
-                    onChange={e => setSymbol(e.target.value)}
-                    disabled={preparing || running}
-                    style={{ width: "auto" }}
-                  >
-                    {symbols.map(s => (
-                      <option key={s.symbol} value={s.symbol}>{s.label || s.symbol}</option>
-                    ))}
-                  </Input>
-                  <Button color="secondary" outline onClick={handleLoad} disabled={preparing || running || !symbol}>
-                    {preparing ? <><Spinner size="sm" className="me-1" /> Loading…</> : "Load Data"}
-                  </Button>
-                  {running ? (
-                    <Button color="danger" onClick={handleStop}>Stop</Button>
-                  ) : (
-                    <Button color="primary" onClick={handleRun} disabled={!prepared}>
-                      <i className="mdi mdi-play me-1" />Run Workflow
-                    </Button>
-                  )}
-                </div>
-              </div>
+            <Col className="d-flex justify-content-end">
+              <Button color="primary" onClick={openNew}>
+                <i className="mdi mdi-plus me-1"></i>New Workflow
+              </Button>
             </Col>
           </Row>
 
-          {error && <Alert color="danger">{error}</Alert>}
-          {!prepared && !error && (
-            <Alert color="info">
-              Pick a symbol and choose <strong>Load Data</strong> to fetch charts and ICT facts,
-              then <strong>Run Workflow</strong>.
-            </Alert>
-          )}
-
-          {running && (
-            <Progress className="mb-3" value={total ? (done / total) * 100 : 0} striped animated>
-              {done}/{total}
-            </Progress>
-          )}
-
-          {verdict && (
-            <Row className="mb-4">
-              <Col lg="12">
-                <Card className="border border-2">
+          <Row>
+            {workflows.map((wf) => (
+              <Col lg="6" key={wf.id} className="mb-3">
+                <Card>
                   <CardBody>
-                    <div className="d-flex align-items-center mb-3">
-                      <h5 className="card-title mb-0 me-3">Trade Decision</h5>
-                      <Pill color={VERDICT_COLOR[verdict.verdict] || "secondary"} className="fs-6 me-2">
-                        {verdict.verdict}
-                      </Pill>
-                      <span className="text-muted">
-                        confidence {Math.round((verdict.confidence || 0) * 100)}% · {verdict.timeframe || "—"}
-                      </span>
+                    <div className="d-flex justify-content-between align-items-start mb-2">
+                      <div>
+                        <h5 className="card-title mb-0">{wf.name}</h5>
+                        <small className="text-muted">{wf.symbol}</small>
+                      </div>
+                      <Badge color={wf.enabled ? "success" : "secondary"}>{wf.enabled ? "enabled" : "disabled"}</Badge>
                     </div>
-                    <Row>
-                      {[
-                        ["Entry", verdict.entry], ["Stop", verdict.stop],
-                        ["Targets", (verdict.targets || []).join(", ")], ["R:R", verdict.riskReward],
-                      ].map(([label, value]) => (
-                        <Col md="3" key={label}>
-                          <small className="text-muted d-block">{label}</small>
-                          <span className="fw-medium">{value || value === 0 ? value : "—"}</span>
-                        </Col>
-                      ))}
-                    </Row>
-                    {verdict.rationale && <p className="mt-3 mb-1">{verdict.rationale}</p>}
-                    {verdict.invalidation && (
-                      <p className="text-muted mb-0"><small><strong>Invalidation:</strong> {verdict.invalidation}</small></p>
+                    <div className="small mb-2">
+                      Agents: {wf.agentNames?.join(" → ") || "—"}
+                    </div>
+                    {wf.cron_expression && (
+                      <div className="small text-muted mb-2"><code>{wf.cron_expression}</code></div>
+                    )}
+                    <div className="d-flex gap-2 mb-2">
+                      <Button size="sm" color="primary" onClick={() => handleRun(wf)} disabled={running === wf.id}>
+                        {running === wf.id ? <><Spinner size="sm" className="me-1" />Running...</> : <><i className="mdi mdi-play me-1"></i>Run Now</>}
+                      </Button>
+                      <Button size="sm" color="secondary" outline onClick={() => openEdit(wf)}>
+                        <i className="mdi mdi-pencil"></i>
+                      </Button>
+                      <Button size="sm" color="danger" outline onClick={() => handleDelete(wf)}>
+                        <i className="mdi mdi-delete"></i>
+                      </Button>
+                    </div>
+
+                    {running === null && runResult && runResult.workflowId === wf.id && (
+                      <div className="border-top pt-2 mt-2">
+                        <div className="d-flex align-items-center gap-2 mb-1">
+                          {getVerdictBadge(runResult.verdict)}
+                          {runResult.confidence != null && <small className="text-muted">confidence {(runResult.confidence * 100).toFixed(0)}%</small>}
+                        </div>
+                        {runResult.rationale && <p className="small mb-1">{runResult.rationale}</p>}
+                        {runResult.agents?.map((a) => {
+                          const style = STATUS_ICON[a.status] || { icon: "mdi-circle-outline", color: "text-muted" }
+                          return (
+                            <div key={a.id} className="small mb-1">
+                              <i className={`mdi ${style.icon} ${style.color} me-1`}></i>{a.label}
+                            </div>
+                          )
+                        })}
+                        {runResult.charts?.["15"] && (
+                          <Button size="sm" color="secondary" outline onClick={() => setLightboxUrl(chartUrl(runResult.charts["15"]))}>
+                            <i className="mdi mdi-arrow-expand me-1"></i>View Chart
+                          </Button>
+                        )}
+                      </div>
                     )}
                   </CardBody>
                 </Card>
               </Col>
-            </Row>
-          )}
-
-          <Row className="mb-4">
-            <Col lg="12">
-              <Card>
-                <CardBody>
-                  <h5 className="card-title mb-3">Agents ({total})</h5>
-                  <div className="table-responsive">
-                    <table className="table table-hover align-middle mb-0">
-                      <thead className="table-light">
-                        <tr>
-                          <th>Agent</th><th>Status</th><th>Vision</th>
-                          <th>Latency</th><th>Tokens</th><th>Output</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {agents.map(agent => {
-                          const s = state[agent.id] || { status: "idle" }
-                          const images = (agent.images || []).length
-                          return (
-                            <React.Fragment key={agent.id}>
-                              <tr>
-                                <td className="fw-medium">{agent.label || agent.name || agent.id}</td>
-                                <td>
-                                  <Pill color={STATUS_COLOR[s.status]}>
-                                    {s.status === "running" && <Spinner size="sm" className="me-1" />}
-                                    {s.status}
-                                  </Pill>
-                                </td>
-                                <td>
-                                  {images > 0
-                                    ? <Pill color="dark"><i className="mdi mdi-eye me-1" />{images}</Pill>
-                                    : <span className="text-muted">—</span>}
-                                </td>
-                                <td>{s.latency ? `${(s.latency / 1000).toFixed(1)}s` : "—"}</td>
-                                <td>{s.tokenCount ? s.tokenCount.toLocaleString() : "—"}</td>
-                                <td>
-                                  {s.output ? (
-                                    <Button size="sm" color="link" className="p-0"
-                                      onClick={() => setExpanded(e => ({ ...e, [agent.id]: !e[agent.id] }))}>
-                                      {expanded[agent.id] ? "Hide" : "View"}
-                                    </Button>
-                                  ) : s.error ? (
-                                    <small className="text-danger">{s.error}</small>
-                                  ) : <span className="text-muted">—</span>}
-                                </td>
-                              </tr>
-                              {expanded[agent.id] && s.output && (
-                                <tr>
-                                  <td colSpan="6" className="bg-light">
-                                    <pre className="mb-0" style={{ whiteSpace: "pre-wrap", fontSize: "12px", maxHeight: "400px", overflow: "auto" }}>
-                                      {s.output}
-                                    </pre>
-                                  </td>
-                                </tr>
-                              )}
-                            </React.Fragment>
-                          )
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </CardBody>
-              </Card>
-            </Col>
+            ))}
+            {!workflows.length && (
+              <Col><p className="text-muted">No workflows yet. Create agents first, then chain them into a workflow.</p></Col>
+            )}
           </Row>
-
-          {prepared?.charts && Object.keys(prepared.charts).length > 0 && (
-            <Row>
-              <Col lg="12">
-                <Card>
-                  <CardBody>
-                    <h5 className="card-title mb-3">Annotated Charts</h5>
-                    <Row>
-                      {Object.entries(prepared.charts).map(([key, path]) => (
-                        <Col md="6" key={key} className="mb-3">
-                          <small className="text-muted d-block mb-1">
-                            {key} · {prepared.timeframes?.[key]}
-                          </small>
-                          <img src={chartUrl(path)} alt={key} className="img-fluid rounded border" />
-                        </Col>
-                      ))}
-                    </Row>
-                  </CardBody>
-                </Card>
-              </Col>
-            </Row>
-          )}
         </Container>
       </div>
+
+      <Modal isOpen={Boolean(editing)} toggle={close} size="lg">
+        <ModalHeader toggle={close}>{editing?.id ? "Edit Workflow" : "New Workflow"}</ModalHeader>
+        <Form onSubmit={handleSave}>
+          <ModalBody>
+            <FormGroup className="mb-3">
+              <Label>Name</Label>
+              <Input type="text" name="name" value={form.name} onChange={handleChange} required />
+            </FormGroup>
+            <FormGroup className="mb-3">
+              <Label>Symbol</Label>
+              <div className="d-flex gap-2">
+                <Input type="text" name="symbol" value={form.symbol} onChange={handleChange} placeholder="NSE:RELIANCE" required />
+                <Button type="button" color="secondary" outline onClick={handleCheckSymbol} disabled={checking || !form.symbol.trim()}>
+                  {checking ? <Spinner size="sm" /> : "Check"}
+                </Button>
+              </div>
+              {checkResult && (
+                <small className={checkResult.ok ? "text-success" : "text-danger"}>
+                  <i className={`mdi ${checkResult.ok ? "mdi-check" : "mdi-close"} me-1`}></i>
+                  {checkResult.ok ? "Symbol resolves." : checkResult.error}
+                </small>
+              )}
+            </FormGroup>
+            <FormGroup className="mb-3">
+              <Label>Agents (in order)</Label>
+              {!agents.length && <p className="small text-muted">No agents yet — create one on the Agents page first.</p>}
+              {mechanicalError && <Alert color="warning" className="py-1 px-2 small">{mechanicalError}</Alert>}
+              {agents.map((agent) => {
+                const idx = form.agentIds.indexOf(agent.id)
+                return (
+                  <div key={agent.id} className="d-flex align-items-center gap-2 mb-1">
+                    <input
+                      type="checkbox"
+                      className="form-check-input"
+                      checked={idx !== -1}
+                      onChange={() => toggleAgent(agent.id)}
+                    />
+                    <span className="flex-grow-1">
+                      {idx !== -1 && <Badge color="secondary" className="me-2">{idx + 1}</Badge>}
+                      {agent.name}
+                      {agent.kind === "mechanical" && <Badge color="warning" className="ms-2">mechanical</Badge>}
+                    </span>
+                    {idx !== -1 && (
+                      <>
+                        <Button size="sm" color="link" onClick={() => moveAgent(agent.id, -1)} disabled={idx === 0}>
+                          <i className="mdi mdi-arrow-up"></i>
+                        </Button>
+                        <Button size="sm" color="link" onClick={() => moveAgent(agent.id, 1)} disabled={idx === form.agentIds.length - 1}>
+                          <i className="mdi mdi-arrow-down"></i>
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                )
+              })}
+            </FormGroup>
+            <FormGroup className="mb-3">
+              <Label>Cron Expression (optional)</Label>
+              <Input type="text" name="cronExpression" value={form.cronExpression} onChange={handleChange} placeholder="0 9 * * * (daily at 9am)" />
+              <small className="text-muted">
+                Examples: <code>0 * * * *</code> hourly · <code>0 9 * * *</code> daily 9am · <code>0 9 * * 1</code> weekly Monday 9am. Leave blank for manual-run only.
+              </small>
+            </FormGroup>
+            <div className="form-check">
+              <input type="checkbox" className="form-check-input" id="enabled" name="enabled" checked={form.enabled} onChange={handleChange} />
+              <label className="form-check-label" htmlFor="enabled">Enabled</label>
+            </div>
+          </ModalBody>
+          <ModalFooter>
+            <Button color="secondary" outline type="button" onClick={close}>Cancel</Button>
+            <Button color="primary" type="submit" disabled={saving || !form.agentIds.length || Boolean(mechanicalError)}>{saving ? "Saving..." : "Save"}</Button>
+          </ModalFooter>
+        </Form>
+      </Modal>
+
+      <ChartLightbox url={lightboxUrl} isOpen={Boolean(lightboxUrl)} toggle={() => setLightboxUrl(null)} />
     </React.Fragment>
   )
 }

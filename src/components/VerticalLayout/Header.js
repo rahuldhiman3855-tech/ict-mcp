@@ -1,14 +1,18 @@
 import PropTypes from "prop-types";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 
 import { connect } from "react-redux";
-import { Form, Input, Button, Row, Col, Container } from "reactstrap";
+import {
+  Container,
+  Dropdown,
+  DropdownToggle,
+  DropdownMenu,
+} from "reactstrap";
 
 import { Link } from "react-router-dom";
 import { withTranslation } from "react-i18next";
 
 import {
-  showRightSidebarAction,
   toggleLeftmenu,
   changeSidebarType,
 } from "../../store/actions";
@@ -16,13 +20,23 @@ import {
 const icon = "/icon.svg";
 
 const Header = (props) => {
+  const [menu, setMenu] = useState(false);
+  const [username, setUsername] = useState("Admin");
+
+  useEffect(() => {
+    const authUser = localStorage.getItem("authUser");
+    if (authUser) {
+      const obj = JSON.parse(authUser);
+      setUsername(obj.username || obj.displayName || obj.email || "Admin");
+    }
+  }, []);
+
   function toggleFullscreen() {
     if (
       !document.fullscreenElement &&
-      /* alternative standard method */ !document.mozFullScreenElement &&
+      !document.mozFullScreenElement &&
       !document.webkitFullscreenElement
     ) {
-      // current working methods
       if (document.documentElement.requestFullscreen) {
         document.documentElement.requestFullscreen();
       } else if (document.documentElement.mozRequestFullScreen) {
@@ -44,62 +58,83 @@ const Header = (props) => {
   }
 
   function tToggle() {
-    var body = document.body;
+    const body = document.body;
+
     if (window.screen.width <= 768) {
-    body.classList.toggle("sidebar-enable");
+      body.classList.toggle("sidebar-enable");
     } else {
-    body.classList.toggle("vertical-collpsed");
-    body.classList.toggle("sidebar-enable");
+      body.classList.toggle("vertical-collpsed");
+      body.classList.toggle("sidebar-enable");
     }
-}
+  }
 
   return (
     <React.Fragment>
       <header id="page-topbar">
         <div className="navbar-header">
           <Container fluid>
-            <div className="float-end">
-              <button
-                type="button"
-                onClick={() => {
-                  toggleFullscreen();
-                }}
-                className="btn header-item noti-icon waves-effect me-2"
-                data-toggle="fullscreen"
-                title="Toggle fullscreen"
-              >
-                <i className="mdi mdi-fullscreen"></i>
-              </button>
-              <button
-                type="button"
-                className="btn header-item noti-icon right-bar-toggle waves-effect"
-                onClick={() => {
-                  props.showRightSidebarAction(!props.showRightSidebar);
-                }}
-                title="Settings"
-              >
-                <i className="mdi mdi-settings-outline"></i>
-              </button>
-            </div>
-            <div>
-              <div className="navbar-brand-box">
-                <Link to="/" className="logo">
-                  <span className="logo-lg">
-                    <img src={icon} alt="ICT Cron Manager" height="68" />
+            <div className="header-content">
+              {/* Left side */}
+              <div className="header-left">
+                <Link to="/" className="header-logo">
+                  <img
+                    src={icon}
+                    alt="ICT Cron Manager"
+                    className="header-logo-icon"
+                  />
+                  <span className="mechanical-agent-text">
+                    Workflow Builder
                   </span>
                 </Link>
+
+                {/* Mobile menu */}
+                <button
+                  type="button"
+                  className="btn btn-sm px-3 font-size-16 d-lg-none header-item waves-effect waves-light"
+                  onClick={tToggle}
+                  data-toggle="collapse"
+                  data-target="#topnav-menu-content"
+                >
+                  <i className="fa fa-fw fa-bars"></i>
+                </button>
               </div>
-              <button
-              type="button"
-              className="btn btn-sm px-3 font-size-16 d-lg-none header-item waves-effect waves-light"
-              data-toggle="collapse"
-              onClick={() => {
-                tToggle()
-              }}
-              data-target="#topnav-menu-content"
-            >
-              <i className="fa fa-fw fa-bars"></i>
-            </button>
+
+              {/* Right side */}
+              <div className="header-right">
+                <button
+                  type="button"
+                  onClick={toggleFullscreen}
+                  className="btn header-item noti-icon waves-effect"
+                  data-toggle="fullscreen"
+                  title="Toggle fullscreen"
+                >
+                  <i className="mdi mdi-fullscreen"></i>
+                </button>
+
+                <Dropdown
+                  isOpen={menu}
+                  toggle={() => setMenu(!menu)}
+                  className="d-inline-block"
+                >
+                  <DropdownToggle
+                    className="btn header-item waves-effect"
+                    id="page-header-user-dropdown"
+                    tag="button"
+                  >
+                    <i className="mdi mdi-account-circle font-size-24 align-middle me-1"></i>
+                    <span className="d-none d-xl-inline-block ms-1">
+                      {username}
+                    </span>
+                    <i className="mdi mdi-chevron-down d-none d-xl-inline-block"></i>
+                  </DropdownToggle>
+                  <DropdownMenu className="dropdown-menu-end">
+                    <Link to="/logout" className="dropdown-item text-danger">
+                      <i className="mdi mdi-logout font-size-16 align-middle me-1 text-danger"></i>
+                      <span>Logout</span>
+                    </Link>
+                  </DropdownMenu>
+                </Dropdown>
+              </div>
             </div>
           </Container>
         </div>
@@ -112,20 +147,21 @@ Header.propTypes = {
   changeSidebarType: PropTypes.func,
   leftMenu: PropTypes.any,
   leftSideBarType: PropTypes.any,
-  showRightSidebar: PropTypes.any,
-  showRightSidebarAction: PropTypes.func,
   t: PropTypes.any,
   toggleLeftmenu: PropTypes.func,
 };
 
 const mapStatetoProps = (state) => {
-  const { layoutType, showRightSidebar, leftMenu, leftSideBarType } =
-    state.Layout;
-  return { layoutType, showRightSidebar, leftMenu, leftSideBarType };
+  const { layoutType, leftMenu, leftSideBarType } = state.Layout;
+
+  return {
+    layoutType,
+    leftMenu,
+    leftSideBarType,
+  };
 };
 
 export default connect(mapStatetoProps, {
-  showRightSidebarAction,
   toggleLeftmenu,
   changeSidebarType,
 })(withTranslation()(Header));

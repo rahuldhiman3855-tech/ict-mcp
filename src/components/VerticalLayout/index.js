@@ -53,7 +53,7 @@ class Layout extends Component {
       this.props.changeSidebarTheme(this.props.leftSideBarTheme)
     }
 
-    this.props.changeLayout("detached")
+    this.props.changeLayout(this.props.layoutType || "vertical")
 
     if (this.props.layoutWidth) {
       this.props.changeLayoutWidth(this.props.layoutWidth)
@@ -90,18 +90,16 @@ class Layout extends Component {
             </div>
           </div>
         </div>
-        <div className="container-fluid">
-          <div id="layout-wrapper">
-            <Header toggleMenuCallback={this.toggleMenuCallback} />
-            <Sidebar
-              theme={this.props.leftSideBarTheme}
-              type={this.props.leftSideBarType}
-              isMobile={this.state.isMobile}
-            />
-            <div className="main-content">
-              {this.props.children}
-              <Footer />
-            </div>
+        <div id="layout-wrapper">
+          <Header toggleMenuCallback={this.toggleMenuCallback} />
+          <Sidebar
+            theme={this.props.leftSideBarTheme}
+            type={this.props.leftSideBarType}
+            isMobile={this.state.isMobile}
+          />
+          <div className="main-content">
+            {this.props.children}
+            <Footer />
           </div>
         </div>
         {this.props.showRightSidebar ? <Rightbar /> : null}

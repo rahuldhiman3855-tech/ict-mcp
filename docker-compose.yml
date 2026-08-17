@@ -1,75 +1,222 @@
 services:
+
+  # ==========================================================
+  # CHARTS
+  # ==========================================================
+
   charts:
-    build: ./backend/charts
-    image: ict-cron-charts:local
+    build:
+      context: ./backend/charts
+      dockerfile: Dockerfile
+      target: development
+
+    image: ict-cron-charts:dev
     container_name: ict-cron-charts
-    # Published port: React dashboard loads snapshots from here.
+
     ports:
       - "3000:3000"
+
     environment:
+      NODE_ENV: development
       PORT: 3000
+      SNAPSHOT_DIR: /app/snapshots
+
       SNAPSHOT_TTL_MS: ${SNAPSHOT_TTL_MS:-604800000}
-      MAX_CONCURRENT_RENDERS: 3
+      MAX_CONCURRENT_RENDERS: ${MAX_CONCURRENT_RENDERS:-3}
       TV_AUTH_TOKEN: ${TV_AUTH_TOKEN:-}
+
     volumes:
+      # Live source code
+      - ./backend/charts:/app
+
+      # Keep host node_modules out of the container mount
+      - charts-node-modules:/app/node_modules
+
+      # Persistent generated chart snapshots
       - chart-snapshots:/app/snapshots
-    shm_size: 512mb
+
+    working_dir: /app
+
+    shm_size: "512mb"
+
+    command: npm run dev
+
     restart: unless-stopped
-    networks: [backend]
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+    networks:
+      - backend
+
+    init: true
+
+
+  # ==========================================================
+  # CONNECTOR
+  # ==========================================================
 
   connector:
-    build: ./backend/connector
-    image: ict-cron-connector:local
+    build:
+      context: ./backend/connector
+      dockerfile: Dockerfile
+      target: development
+
+    image: ict-cron-connector:dev
     container_name: ict-cron-connector
-    # Published port: external MCP clients and React dashboard call this.
+
     ports:
       - "3002:3002"
+
     environment:
+      NODE_ENV: development
       PORT: 3002
+
       CHART_SERVER_URL: http://charts:3000
+
       DEEPINFRA_API_KEY: ${DEEPINFRA_API_KEY:?set DEEPINFRA_API_KEY in .env}
       DEEPINFRA_MODEL: ${DEEPINFRA_MODEL:-deepseek-ai/DeepSeek-V3}
       DEEPINFRA_VISION_MODEL: ${DEEPINFRA_VISION_MODEL:-Qwen/Qwen2.5-VL-32B-Instruct}
-      ENABLE_SCHEDULER: ${ENABLE_SCHEDULER:-true}
-      RUN_INTERVAL_MS: ${RUN_INTERVAL_MS:-3600000}
-      MAX_SYMBOLS_PER_RUN: ${MAX_SYMBOLS_PER_RUN:-6}
-      NOTIFY_MIN_CONFIDENCE: ${NOTIFY_MIN_CONFIDENCE:-0.6}
+
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       WEBHOOK_URL: ${WEBHOOK_URL:-}
+
       DB_HOST: ${DB_HOST:?set DB_HOST in .env}
       DB_PORT: ${DB_PORT:-3306}
       DB_USER: ${DB_USER:?set DB_USER in .env}
       DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
       DB_NAME: ${DB_NAME:?set DB_NAME in .env}
+
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+
     volumes:
+      # Live source code
+      - ./backend/connector:/app
+
+      # Container-managed dependencies
+      - connector-node-modules:/app/node_modules
+
+      # Persistent connector data
       - connector-data:/app/data
-      - ./backend/connector/watchlist.json:/app/watchlist.json:ro
-    depends_on: [charts]
+
+    working_dir: /app
+
+    command: npm run dev
+
+    depends_on:
+      charts:
+        condition: service_healthy
+
     restart: unless-stopped
-    networks: [backend]
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3002/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+    networks:
+      - backend
+
+    init: true
+
+
+  # ==========================================================
+  # REACT
+  # ==========================================================
 
   react:
     build:
       context: .
+      dockerfile: Dockerfile
+      target: development
+
       args:
         REACT_APP_MCP_CONNECTOR_URL: ${REACT_APP_MCP_CONNECTOR_URL:-http://localhost:3002}
         REACT_APP_CHART_SERVER_URL: ${REACT_APP_CHART_SERVER_URL:-http://localhost:3000}
-    image: ict-cron-manager:local
+
+    image: ict-cron-manager:dev
     container_name: ict-cron-manager
+
     ports:
       - "3001:3001"
+
     environment:
+      NODE_ENV: development
       PORT: 3001
-    depends_on: [charts, connector]
+
+      # Needed when running React watchers inside Docker
+      CHOKIDAR_USEPOLLING: "true"
+      WATCHPACK_POLLING: "true"
+
+    volumes:
+      - .:/app
+      - react-node-modules:/app/node_modules
+
+    working_dir: /app
+
+    command: npm run dev
+
+    depends_on:
+      charts:
+        condition: service_healthy
+
+      connector:
+        condition: service_healthy
+
     restart: unless-stopped
-    networks: [backend]
+
+    networks:
+      - backend
+
+    init: true
+
+
+# ============================================================
+# VOLUMES
+# ============================================================
 
 volumes:
+
+  charts-node-modules:
+    name: ict-charts-node-modules
+
+  connector-node-modules:
+    name: ict-connector-node-modules
+
+  react-node-modules:
+    name: ict-react-node-modules
+
   chart-snapshots:
+    name: ict-chart-snapshots
+
   connector-data:
+    name: ict-connector-data
+
+
+# ============================================================
+# NETWORK
+# ============================================================
 
 networks:
   backend:
+    name: ict-backend
     driver: bridge

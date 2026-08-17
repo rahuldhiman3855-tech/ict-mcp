@@ -7,24 +7,74 @@ const path = require('path');
 const config = require('./config');
 
 /**
- * Runtime-editable notification settings.
+ * Runtime-editable settings: notification config and the mechanical
+ * agent's global tunable parameters.
  *
- * Environment variables remain the defaults, but the dashboard needs to change
- * the Telegram credentials without a redeploy — so stored values win, and the
- * file is the single source of truth once written. Reads go through get() on
- * every send rather than a boot-time snapshot, otherwise a saved token would
- * not take effect until restart.
+ * Environment variables remain the defaults, but the dashboard needs to
+ * change these without a redeploy — so stored values win, and the file is
+ * the single source of truth once written. Reads go through get() on every
+ * use rather than a boot-time snapshot, otherwise a saved value would not
+ * take effect until restart.
  */
 
 const FILE = path.join(config.dataDir, 'settings.json');
 
-const FIELDS = ['telegramBotToken', 'telegramChatId', 'webhookUrl', 'minConfidence'];
+/** Per-field validation. Fields without an entry are stored as trimmed strings. */
+const VALIDATORS = {
+  accountEquity: (v) => positiveNumber(v, 'accountEquity'),
+  riskPerTrade: (v) => numberInRange(v, 'riskPerTrade', 0, 0.1),
+  stopAtrMult: (v) => positiveNumber(v, 'stopAtrMult'),
+  retestZoneAtrMult: (v) => positiveNumber(v, 'retestZoneAtrMult'),
+  retestExpiryCandles: (v) => positiveInt(v, 'retestExpiryCandles'),
+  maxTradesPerDay: (v) => positiveInt(v, 'maxTradesPerDay'),
+  exitMode: (v) => {
+    if (v !== 'fixed_2r' && v !== 'trailing') {
+      throw Object.assign(new Error('exitMode must be "fixed_2r" or "trailing"'), { status: 400 });
+    }
+    return v;
+  },
+};
+
+function numberInRange(value, name, min, max) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < min || num > max) {
+    throw Object.assign(new Error(`${name} must be between ${min} and ${max}`), { status: 400 });
+  }
+  return num;
+}
+
+function positiveNumber(value, name) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) {
+    throw Object.assign(new Error(`${name} must be a positive number`), { status: 400 });
+  }
+  return num;
+}
+
+function positiveInt(value, name) {
+  const num = Number(value);
+  if (!Number.isInteger(num) || num <= 0) {
+    throw Object.assign(new Error(`${name} must be a positive integer`), { status: 400 });
+  }
+  return num;
+}
+
+const FIELDS = [
+  'telegramBotToken', 'telegramChatId', 'webhookUrl',
+  'accountEquity', 'riskPerTrade', 'stopAtrMult', 'retestZoneAtrMult', 'retestExpiryCandles', 'exitMode', 'maxTradesPerDay',
+];
 
 const envDefaults = () => ({
   telegramBotToken: config.notify.telegramToken || '',
   telegramChatId: config.notify.telegramChatId || '',
   webhookUrl: config.notify.webhookUrl || '',
-  minConfidence: config.notify.minConfidence,
+  accountEquity: Number(process.env.ACCOUNT_EQUITY || 100000),
+  riskPerTrade: Number(process.env.RISK_PER_TRADE || 0.005),
+  stopAtrMult: Number(process.env.STOP_ATR_MULT || 1.5),
+  retestZoneAtrMult: Number(process.env.RETEST_ZONE_ATR_MULT || 0.25),
+  retestExpiryCandles: Number(process.env.RETEST_EXPIRY_CANDLES || 12),
+  exitMode: process.env.EXIT_MODE || 'fixed_2r',
+  maxTradesPerDay: Number(process.env.MAX_TRADES_PER_DAY || 3),
 });
 
 function readStored() {
@@ -63,17 +113,8 @@ async function save(patch = {}) {
   const stored = readStored();
   for (const field of FIELDS) {
     if (!(field in patch)) continue;
-    let value = patch[field];
-    if (field === 'minConfidence') {
-      const num = Number(value);
-      if (!Number.isFinite(num) || num < 0 || num > 1) {
-        throw Object.assign(new Error('minConfidence must be between 0 and 1'), { status: 400 });
-      }
-      value = num;
-    } else {
-      value = String(value ?? '').trim();
-    }
-    stored[field] = value;
+    const validate = VALIDATORS[field];
+    stored[field] = validate ? validate(patch[field]) : String(patch[field] ?? '').trim();
   }
 
   await fsp.mkdir(config.dataDir, { recursive: true });

@@ -8,17 +8,20 @@ const { toNodeHandler } = require('@modelcontextprotocol/node');
 const config = require('./src/config');
 const tools = require('./src/tools');
 const { createServer } = require('./src/mcpServer');
-const runner = require('./src/runner');
-const scheduler = require('./src/scheduler');
+const workflowRunner = require('./src/workflowRunner');
+const cronScheduler = require('./src/cronScheduler');
 const store = require('./src/store');
-const workflow = require('./src/workflow');
 const chart = require('./src/chartClient');
 const settings = require('./src/settings');
 const notify = require('./src/notify');
 const auth = require('./src/auth');
-const dbHelpers = require('./src/dbHelpers');
-const llm = require('./src/llm');
-const agentConfig = require('./src/agentConfig');
+const agentsStore = require('./src/agentsStore');
+const mechanicalAgent = require('./src/mechanical/runMechanicalAgent');
+const localMcps = require('./src/localMcps');
+const mcpStore = require('./src/mcpStore');
+const mcpClient = require('./src/mcpClient');
+const subscribers = require('./src/subscribers');
+const pool = require('./src/db');
 
 const app = express();
 
@@ -123,7 +126,7 @@ app.put('/api/dashboard/config', authenticateJWT, async (req, res) => {
   }
 });
 
-/** Tool manifest in OpenAI `tools` format — AgentBoard passes this to the model. */
+/** Tool manifest in OpenAI `tools` format. */
 app.get('/tools', (_req, res) => res.json({ tools: tools.manifest() }));
 
 app.post('/tools/call', async (req, res) => {
@@ -141,61 +144,353 @@ app.post('/tools/call', async (req, res) => {
   }
 });
 
-// ------------------------------------------------------------------- runs
-
-app.post('/api/runs', async (req, res) => {
-  const { symbol, symbols } = req.body || {};
-  try {
-    if (symbol) {
-      const entry = config.watchlist.symbols.find((s) => s.symbol === symbol) || { symbol };
-      return res.json(await runner.runSymbol(entry));
-    }
-    return res.json(await runner.runWatchlist({ symbols: symbols || null }));
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
-});
+// -------------------------------------------------------------------- mcps
 
 /**
- * Prepare a run without executing it.
- *
- * Returns the same agent payloads the scheduler would send to AgentBoard —
- * prompts with ICT facts appended and base64 chart images attached — so the
- * canvas can drive the run itself and animate per-node status. Without this,
- * a workflow run from the UI would reach the models with no market data at
- * all.
+ * MCP Config page: built-in local MCPs (this connector's own tools, and a
+ * Telegram push-message tool) plus any remote MCP the user points at a URL.
+ * Local and remote are both exposed as { id, name, description, kind }.
  */
-app.post('/api/prepare', async (req, res) => {
-  const started = Date.now();
+app.get('/api/mcps', authenticateJWT, async (_req, res) => {
   try {
-    const symbol = (req.body && req.body.symbol) || config.watchlist.symbols[0].symbol;
-    const known = config.watchlist.symbols.find((s) => s.symbol === symbol);
-
-    const context = await runner.gatherContext(symbol);
-    const usable = config.timeframeOrder.filter((k) => context.byKey[k].analysis);
-    if (!usable.length) throw new Error(`no timeframe returned usable data for ${symbol}`);
-
-    const agents = await runner.buildAgents(context);
-    const label = known?.label || symbol;
-    // Matches buildAgents: disabled agents are gone and the DAG bridged around them.
-    const { edges } = await agentConfig.resolveEnabled();
-
-    res.json({
-      symbol,
-      label,
-      agents,
-      edges,
-      userInput: `Analyze ${label} (${symbol}) for an ICT/SMC trade. Timeframes available: ${usable.map((k) => context.byKey[k].resolution).join(', ')}.`,
-      charts: Object.fromEntries(
-        Object.entries(context.charts).filter(([, v]) => v?.path).map(([k, v]) => [k, v.path]),
-      ),
-      timeframes: Object.fromEntries(usable.map((k) => [k, context.byKey[k].resolution])),
-      tookMs: Date.now() - started,
-    });
+    const builtin = localMcps.BUILT_IN_MCPS.map((m) => ({ ...m, kind: 'local', builtin: true }));
+    const custom = mcpStore.list().map((m) => ({ ...m, kind: 'remote', builtin: false }));
+    res.json({ mcps: [...builtin, ...custom] });
   } catch (err) {
-    res.status(err.status || 502).json({ error: err.message, tookMs: Date.now() - started });
+    res.status(500).json({ error: err.message });
   }
 });
+
+app.post('/api/mcps', authenticateJWT, async (req, res) => {
+  try {
+    const { name, url, description } = req.body || {};
+    if (!name || !String(name).trim()) return res.status(400).json({ error: 'name is required' });
+    if (!url || !String(url).trim()) return res.status(400).json({ error: 'url is required' });
+    try { new URL(url); } catch { return res.status(400).json({ error: 'url must be a valid URL' }); }
+
+    const mcp = await mcpStore.create({ name, url, description });
+    res.json({ mcp: { ...mcp, kind: 'remote', builtin: false } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/mcps/:id', authenticateJWT, async (req, res) => {
+  try {
+    if (localMcps.registries[req.params.id]) {
+      return res.status(403).json({ error: 'built-in MCPs cannot be edited' });
+    }
+    const { name, url, description } = req.body || {};
+    if (!name || !String(name).trim()) return res.status(400).json({ error: 'name is required' });
+    if (!url || !String(url).trim()) return res.status(400).json({ error: 'url is required' });
+    try { new URL(url); } catch { return res.status(400).json({ error: 'url must be a valid URL' }); }
+
+    const mcp = await mcpStore.update(req.params.id, { name, url, description });
+    if (!mcp) return res.status(404).json({ error: 'MCP not found' });
+    res.json({ mcp: { ...mcp, kind: 'remote', builtin: false } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/mcps/:id', authenticateJWT, async (req, res) => {
+  try {
+    if (localMcps.registries[req.params.id]) {
+      return res.status(403).json({ error: 'built-in MCPs cannot be deleted' });
+    }
+    const ok = await mcpStore.remove(req.params.id);
+    if (!ok) return res.status(404).json({ error: 'MCP not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/mcps/:id/tools', authenticateJWT, async (req, res) => {
+  try {
+    const local = localMcps.registries[req.params.id];
+    if (local) return res.json({ tools: local.manifest() });
+
+    const mcp = mcpStore.get(req.params.id);
+    if (!mcp) return res.status(404).json({ error: 'MCP not found' });
+    const tools = await mcpClient.listTools(mcp.url);
+    res.json({ tools });
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+app.post('/api/mcps/:id/call', authenticateJWT, async (req, res) => {
+  const started = Date.now();
+  try {
+    const { tool, arguments: args } = req.body || {};
+    if (!tool) return res.status(400).json({ error: 'tool is required' });
+
+    const local = localMcps.registries[req.params.id];
+    if (local) {
+      const result = await local.call(tool, args || {});
+      return res.json({ tool, result, tookMs: Date.now() - started });
+    }
+
+    const mcp = mcpStore.get(req.params.id);
+    if (!mcp) return res.status(404).json({ error: 'MCP not found' });
+    const result = await mcpClient.callTool(mcp.url, tool, args || {});
+    res.json({ tool, result, tookMs: Date.now() - started });
+  } catch (err) {
+    // Same convention as /tools/call: report the failure as data, not an HTTP error.
+    res.json({ tool: req.body?.tool, error: err.message, tookMs: Date.now() - started });
+  }
+});
+
+// -------------------------------------------------------------- telegram
+
+/**
+ * Subscription page: Telegram bot config + connection test + subscriber
+ * management, split out of Settings (which only keeps the mechanical
+ * agent's tunables and the generic webhook now).
+ */
+app.get('/api/telegram/config', authenticateJWT, async (_req, res) => {
+  try {
+    const redacted = settings.redact(settings.describe());
+    res.json({
+      telegramBotTokenSet: redacted.telegramBotTokenSet,
+      telegramBotToken: redacted.telegramBotToken,
+      webhookUrl: redacted.webhookUrl,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/telegram/config', authenticateJWT, async (req, res) => {
+  try {
+    const { telegramBotToken, webhookUrl } = req.body || {};
+    const patch = {};
+    if (telegramBotToken) patch.telegramBotToken = telegramBotToken;
+    if (webhookUrl !== undefined) patch.webhookUrl = webhookUrl;
+    const updated = await settings.save(patch);
+    const redacted = settings.redact(updated);
+    res.json({
+      telegramBotTokenSet: redacted.telegramBotTokenSet,
+      telegramBotToken: redacted.telegramBotToken,
+      webhookUrl: redacted.webhookUrl,
+    });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+app.post('/api/telegram/test', authenticateJWT, async (_req, res) => {
+  try {
+    const bot = await notify.checkConnection();
+    res.json({ ok: true, bot });
+  } catch (err) {
+    res.status(err.status || 502).json({ ok: false, error: err.message });
+  }
+});
+
+/** Chats that messaged the bot but haven't been subscribed yet. */
+app.get('/api/telegram/pending', authenticateJWT, async (_req, res) => {
+  try {
+    const pending = await notify.fetchPendingChats();
+    res.json({ pending });
+  } catch (err) {
+    res.status(err.status || 502).json({ error: err.message });
+  }
+});
+
+app.get('/api/telegram/subscribers', authenticateJWT, async (_req, res) => {
+  try {
+    res.json({ subscribers: subscribers.list() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/telegram/subscribers', authenticateJWT, async (req, res) => {
+  try {
+    const { chatId, name, username, type } = req.body || {};
+    if (!chatId || !String(chatId).trim()) return res.status(400).json({ error: 'chatId is required' });
+    const subscriber = await subscribers.create({ chatId, name, username, type });
+    res.json({ subscriber });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/telegram/subscribers/:id', authenticateJWT, async (req, res) => {
+  try {
+    const ok = await subscribers.remove(req.params.id);
+    if (!ok) return res.status(404).json({ error: 'subscriber not found' });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------- symbols
+
+app.post('/api/symbols/check', async (req, res) => {
+  const symbol = req.body?.symbol;
+  if (!symbol) return res.status(400).json({ ok: false, error: 'symbol is required' });
+  res.json(await workflowRunner.checkSymbol(symbol));
+});
+
+// ----------------------------------------------------------------- agents
+
+/**
+ * The mechanical agent is a fixed singleton (id 0) — not user-creatable,
+ * always listed alongside your own LLM agents so it can be added to a
+ * workflow like any other step.
+ */
+app.get('/api/agents', authenticateJWT, async (_req, res) => {
+  try {
+    const agents = await agentsStore.listAgents();
+    res.json({ agents: [mechanicalAgent.MECHANICAL_AGENT, ...agents] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/agents', authenticateJWT, async (req, res) => {
+  try {
+    const { name, systemPrompt, temperature, maxTokens, vision } = req.body || {};
+    if (!name || !String(name).trim()) return res.status(400).json({ error: 'name is required' });
+    if (!systemPrompt || !String(systemPrompt).trim()) return res.status(400).json({ error: 'systemPrompt is required' });
+    const agent = await agentsStore.createAgent({ name, systemPrompt, temperature, maxTokens, vision });
+    res.json({ agent });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/agents/:id', authenticateJWT, async (req, res) => {
+  try {
+    if (Number(req.params.id) === mechanicalAgent.MECHANICAL_AGENT_ID) {
+      return res.status(403).json({ error: 'the mechanical agent is fixed and cannot be edited' });
+    }
+    const { name, systemPrompt, temperature, maxTokens, vision } = req.body || {};
+    if (!name || !String(name).trim()) return res.status(400).json({ error: 'name is required' });
+    if (!systemPrompt || !String(systemPrompt).trim()) return res.status(400).json({ error: 'systemPrompt is required' });
+    const agent = await agentsStore.updateAgent(req.params.id, { name, systemPrompt, temperature, maxTokens, vision });
+    res.json({ agent });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/agents/:id', authenticateJWT, async (req, res) => {
+  try {
+    if (Number(req.params.id) === mechanicalAgent.MECHANICAL_AGENT_ID) {
+      return res.status(403).json({ error: 'the mechanical agent is fixed and cannot be deleted' });
+    }
+    const referencing = await agentsStore.deleteAgent(req.params.id);
+    if (referencing) {
+      return res.status(409).json({ error: `agent is used by workflow(s): ${referencing.join(', ')}` });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// -------------------------------------------------------------- workflows
+
+app.get('/api/workflows', authenticateJWT, async (_req, res) => {
+  try {
+    const [workflows, agents] = await Promise.all([agentsStore.listWorkflows(), agentsStore.listAgents()]);
+    const byId = new Map([mechanicalAgent.MECHANICAL_AGENT, ...agents].map((a) => [a.id, a]));
+    res.json({
+      workflows: workflows.map((w) => ({
+        ...w,
+        agentNames: w.agent_ids.map((id) => byId.get(id)?.name || `#${id}`),
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** The mechanical agent's structured output becomes the verdict directly — it must be the last step. */
+function validateAgentChain(agentIds) {
+  const mechIdx = agentIds.indexOf(mechanicalAgent.MECHANICAL_AGENT_ID);
+  if (mechIdx !== -1 && mechIdx !== agentIds.length - 1) {
+    return 'the mechanical agent must be the last step in the workflow';
+  }
+  return null;
+}
+
+app.post('/api/workflows', authenticateJWT, async (req, res) => {
+  try {
+    const { name, symbol, agentIds, cronExpression, enabled } = req.body || {};
+    if (!name || !String(name).trim()) return res.status(400).json({ error: 'name is required' });
+    if (!symbol || !String(symbol).trim()) return res.status(400).json({ error: 'symbol is required' });
+    if (!Array.isArray(agentIds) || !agentIds.length) return res.status(400).json({ error: 'at least one agent is required' });
+    const chainError = validateAgentChain(agentIds);
+    if (chainError) return res.status(400).json({ error: chainError });
+    if (cronExpression && !cronScheduler.validate(cronExpression)) {
+      return res.status(400).json({ error: `invalid cron expression "${cronExpression}"` });
+    }
+
+    const workflow = await agentsStore.createWorkflow({ name, symbol: symbol.toUpperCase(), agentIds, cronExpression, enabled });
+    await cronScheduler.reconcileOne(workflow.id);
+    res.json({ workflow });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/workflows/:id', authenticateJWT, async (req, res) => {
+  try {
+    const { name, symbol, agentIds, cronExpression, enabled } = req.body || {};
+    if (!name || !String(name).trim()) return res.status(400).json({ error: 'name is required' });
+    if (!symbol || !String(symbol).trim()) return res.status(400).json({ error: 'symbol is required' });
+    if (!Array.isArray(agentIds) || !agentIds.length) return res.status(400).json({ error: 'at least one agent is required' });
+    const chainError = validateAgentChain(agentIds);
+    if (chainError) return res.status(400).json({ error: chainError });
+    if (cronExpression && !cronScheduler.validate(cronExpression)) {
+      return res.status(400).json({ error: `invalid cron expression "${cronExpression}"` });
+    }
+
+    const workflow = await agentsStore.updateWorkflow(req.params.id, { name, symbol: symbol.toUpperCase(), agentIds, cronExpression, enabled });
+    await cronScheduler.reconcileOne(req.params.id);
+    res.json({ workflow });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/workflows/:id', authenticateJWT, async (req, res) => {
+  try {
+    await agentsStore.deleteWorkflow(req.params.id);
+    await cronScheduler.reconcileOne(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/workflows/:id/schedule/:action', authenticateJWT, async (req, res) => {
+  try {
+    const { action, id } = req.params;
+    if (action === 'start') await agentsStore.setWorkflowEnabled(id, true);
+    else if (action === 'stop') await agentsStore.setWorkflowEnabled(id, false);
+    else return res.status(400).json({ error: 'action must be start or stop' });
+
+    await cronScheduler.reconcileOne(id);
+    res.json({ workflow: await agentsStore.getWorkflow(id) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/workflows/:id/run', authenticateJWT, async (req, res) => {
+  // Fire and forget: a multi-agent chain can outlive a sane HTTP timeout.
+  workflowRunner.runWorkflow(req.params.id, { trigger: 'manual' }).catch(() => {});
+  res.status(202).json({ triggered: true, note: 'poll /api/signals for the result' });
+});
+
+// ---------------------------------------------------------------- signals
 
 app.get('/api/signals', async (req, res) => {
   try {
@@ -240,155 +535,9 @@ app.get('/api/runs/:runId', async (req, res) => {
 
 // ------------------------------------------------------------------- meta
 
-app.get('/api/watchlist', async (req, res) => {
-  try {
-    const symbols = await dbHelpers.getWatchlist();
-    res.json({
-      timeframes: config.timeframes,
-      symbols,
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/api/workflow', async (_req, res) => {
-  try {
-    const { agents, edges } = await agentConfig.resolveEnabled();
-    res.json({
-      agents: agents.map(({ systemPrompt, ...rest }) => ({
-        ...rest,
-        promptChars: systemPrompt.length,
-      })),
-      edges,
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/**
- * The full roster including disabled agents, with prompts, for the Agents
- * screen. /api/workflow deliberately returns only what a run would execute.
- */
-app.get('/api/agents', authenticateJWT, async (_req, res) => {
-  try {
-    res.json({ agents: await agentConfig.resolveAgents() });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/**
- * Update one agent. Accepts any subset of {enabled, name, description,
- * temperature, maxTokens, systemPrompt}; omitted fields keep their current
- * effective value, so a toggle does not wipe an earlier prompt edit.
- */
-app.patch('/api/agents/:id', authenticateJWT, async (req, res) => {
-  try {
-    const current = (await agentConfig.resolveAgents()).find((a) => a.id === req.params.id);
-    if (!current) return res.status(404).json({ error: `unknown agent "${req.params.id}"` });
-
-    const body = req.body || {};
-    const pick = (key, fallback) => (body[key] === undefined ? fallback : body[key]);
-
-    const temperature = Number(pick('temperature', current.temperature));
-    const maxTokens = Number(pick('maxTokens', current.maxTokens));
-    if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2) {
-      return res.status(400).json({ error: 'temperature must be between 0 and 2' });
-    }
-    if (!Number.isInteger(maxTokens) || maxTokens < 1 || maxTokens > 8000) {
-      return res.status(400).json({ error: 'maxTokens must be an integer between 1 and 8000' });
-    }
-
-    const systemPrompt = String(pick('systemPrompt', current.systemPrompt) || '');
-    if (!systemPrompt.trim()) {
-      return res.status(400).json({ error: 'systemPrompt cannot be empty' });
-    }
-
-    await dbHelpers.saveAgentOverride(req.params.id, {
-      type: current.type,
-      name: pick('name', current.label),
-      description: pick('description', current.description),
-      enabled: !!pick('enabled', current.enabled),
-      config: { temperature, maxTokens, systemPrompt },
-    });
-
-    const updated = (await agentConfig.resolveAgents()).find((a) => a.id === req.params.id);
-    res.json({ agent: updated });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-/**
- * Execute a single agent.
- *
- * The dashboard walks the DAG itself — one call per node, parent outputs
- * chained in as `userInput` — so it can animate per-node status instead of
- * blocking on one long request for the whole graph.
- *
- * `images` are the base64 chart snapshots from /api/prepare; passing any
- * routes the call to the vision model (see llm.modelFor).
- */
-app.post('/api/execute', authenticateJWT, async (req, res) => {
-  const started = Date.now();
-  try {
-    const {
-      systemPrompt,
-      userInput,
-      temperature = 0.3,
-      maxTokens = 1024,
-      images = [],
-      model: modelOverride,
-    } = req.body || {};
-
-    if (typeof systemPrompt !== 'string' || !systemPrompt.trim()) {
-      return res.status(400).json({ error: 'systemPrompt is required' });
-    }
-
-    const imageList = Array.isArray(images) ? images : [];
-    const model = llm.modelFor(modelOverride, imageList.length > 0);
-
-    const completion = await llm.getClient().chat.completions.create({
-      model,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        llm.buildUserMessage(userInput || 'Proceed.', imageList),
-      ],
-      temperature,
-      max_tokens: maxTokens,
-    });
-
-    const text = completion.choices[0]?.message?.content || '';
-    return res.json({
-      output: text,
-      latency: Date.now() - started,
-      tokenCount: llm.countTokens(
-        completion.usage,
-        systemPrompt + (userInput || ''),
-        text,
-      ),
-      model,
-      hadImages: imageList.length,
-    });
-  } catch (err) {
-    return res.status(err.status === 401 ? 502 : 500).json({
-      error: llm.describeError(err),
-      latency: Date.now() - started,
-    });
-  }
-});
-
-/**
- * User settings stored in MySQL. Telegram bot token is redacted on read.
- */
 app.get('/api/settings', authenticateJWT, async (req, res) => {
   try {
-    const userSettings = await dbHelpers.getSettings(req.user.userId);
-    const redacted = { ...userSettings };
-    if (redacted.telegram_bot_token) delete redacted.telegram_bot_token;
-    res.json(redacted);
+    res.json(settings.redact(settings.describe()));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -396,13 +545,8 @@ app.get('/api/settings', authenticateJWT, async (req, res) => {
 
 app.post('/api/settings', authenticateJWT, async (req, res) => {
   try {
-    const data = req.body || {};
-    const updated = {};
-    for (const [key, value] of Object.entries(data)) {
-      await dbHelpers.saveSetting(req.user.userId, key, value);
-      updated[key] = key === 'telegram_bot_token' ? '***redacted***' : value;
-    }
-    res.json(updated);
+    const updated = await settings.save(req.body || {});
+    res.json(settings.redact(updated));
   } catch (err) {
     res.status(err.status || 500).json({ error: err.message });
   }
@@ -417,20 +561,6 @@ app.post('/api/settings/telegram/test', async (_req, res) => {
   }
 });
 
-app.get('/api/scheduler', (_req, res) => res.json(scheduler.status()));
-
-app.post('/api/scheduler/:action', async (req, res) => {
-  const { action } = req.params;
-  if (action === 'start') return res.json(scheduler.start());
-  if (action === 'stop') return res.json(scheduler.stop());
-  if (action === 'trigger') {
-    // Fire and forget: a full watchlist pass outlives a sane HTTP timeout.
-    scheduler.tick('manual').catch(() => {});
-    return res.status(202).json({ triggered: true, note: 'poll /api/scheduler for progress' });
-  }
-  return res.status(400).json({ error: 'action must be start, stop, or trigger' });
-});
-
 app.get('/api/health', async (_req, res) => {
   const upstream = await chart.health().then(() => 'ok').catch((err) => err.message);
   res.json({
@@ -439,7 +569,92 @@ app.get('/api/health', async (_req, res) => {
     uptimeSec: Math.round(process.uptime()),
     chartServer: upstream,
     tools: tools.definitions.length,
-    scheduler: scheduler.status(),
+    activeCronJobs: cronScheduler.activeCount(),
+    positionMonitorActive: cronScheduler.positionMonitorActive(),
+  });
+});
+
+function withTimeout(promise, ms, label) {
+  return Promise.race([
+    promise,
+    new Promise((_resolve, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)),
+  ]);
+}
+
+/**
+ * Thorough health check for the Health page: actually exercises the DB,
+ * chart server, Telegram bot, and every MCP (built-in and remote) instead
+ * of just reporting config presence. Each check is independently timed out
+ * so one dead remote MCP can't hang the whole page.
+ */
+app.get('/api/health/full', authenticateJWT, async (_req, res) => {
+  const startedAt = Date.now();
+
+  const dbCheck = (async () => {
+    try {
+      const conn = await withTimeout(pool.getConnection(), 4000, 'database');
+      conn.release();
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  })();
+
+  const chartCheck = withTimeout(chart.health(), 5000, 'chart server')
+    .then(() => ({ ok: true }))
+    .catch((err) => ({ ok: false, error: err.message }));
+
+  const telegramCheck = (async () => {
+    const s = settings.get();
+    const subCount = subscribers.list().length;
+    if (!s.telegramBotToken) return { configured: false, ok: false, error: 'no bot token configured', subscribers: subCount };
+    try {
+      const bot = await withTimeout(notify.checkConnection(), 5000, 'telegram');
+      return { configured: true, ok: true, bot, subscribers: subCount };
+    } catch (err) {
+      return { configured: true, ok: false, error: err.message, subscribers: subCount };
+    }
+  })();
+
+  const mcpChecks = (async () => {
+    const builtin = localMcps.BUILT_IN_MCPS.map((m) => ({ ...m, kind: 'local' }));
+    const custom = mcpStore.list().map((m) => ({ ...m, kind: 'remote' }));
+
+    return Promise.all([...builtin, ...custom].map(async (mcp) => {
+      const started = Date.now();
+      try {
+        if (mcp.id === 'telegram') {
+          const s = settings.get();
+          if (!s.telegramBotToken) throw new Error('no bot token configured');
+          await withTimeout(notify.checkConnection(), 5000, mcp.name);
+          return { id: mcp.id, name: mcp.name, kind: mcp.kind, ok: true, toolCount: localMcps.registries[mcp.id].definitions.length, tookMs: Date.now() - started };
+        }
+        if (localMcps.registries[mcp.id]) {
+          return { id: mcp.id, name: mcp.name, kind: mcp.kind, ok: true, toolCount: localMcps.registries[mcp.id].definitions.length, tookMs: Date.now() - started };
+        }
+        const toolsList = await withTimeout(mcpClient.listTools(mcp.url), 5000, mcp.name);
+        return { id: mcp.id, name: mcp.name, kind: mcp.kind, url: mcp.url, ok: true, toolCount: toolsList.length, tookMs: Date.now() - started };
+      } catch (err) {
+        return { id: mcp.id, name: mcp.name, kind: mcp.kind, url: mcp.url, ok: false, error: err.message, tookMs: Date.now() - started };
+      }
+    }));
+  })();
+
+  const [db, chartServer, telegram, mcps] = await Promise.all([dbCheck, chartCheck, telegramCheck, mcpChecks]);
+
+  res.json({
+    ok: db.ok && chartServer.ok,
+    service: 'mcp-connector',
+    uptimeSec: Math.round(process.uptime()),
+    checkedAt: new Date().toISOString(),
+    tookMs: Date.now() - startedAt,
+    activeCronJobs: cronScheduler.activeCount(),
+    positionMonitorActive: cronScheduler.positionMonitorActive(),
+    db,
+    chartServer,
+    telegram,
+    webhook: { configured: Boolean(settings.get().webhookUrl) },
+    mcps,
   });
 });
 
@@ -451,13 +666,12 @@ app.use((err, _req, res, _next) => {
 // ---------------------------------------------------------------- startup
 
 if (require.main === module) {
-  app.listen(config.port, () => {
+  app.listen(config.port, async () => {
     console.log(`mcp-connector listening on http://localhost:${config.port}`);
     console.log(`  MCP endpoint   /mcp  (${tools.definitions.length} tools)`);
     console.log(`  chart-server   ${config.chartServerUrl}`);
-    console.log(`  watchlist      ${config.watchlist.symbols.length} symbols from ${config.watchlist.file}`);
-    const started = scheduler.start();
-    console.log(`  scheduler      ${started.enabled ? `every ${config.scheduler.intervalMs / 60000} min` : 'disabled'}`);
+    const { active } = await cronScheduler.reconcileAll().catch(() => ({ active: 0 }));
+    console.log(`  cron jobs      ${active} active`);
   });
 }
 

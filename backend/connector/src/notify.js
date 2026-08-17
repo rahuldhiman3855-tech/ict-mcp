@@ -1,42 +1,32 @@
 'use strict';
 
-const store = require('./store');
 const settings = require('./settings');
+const subscribers = require('./subscribers');
 
 /**
  * Outbound alerts.
  *
- * An hourly loop over six symbols would emit 144 messages a day if it pushed
- * everything, so the default is to stay quiet: alert only when the verdict
- * actually changes, or when a confident actionable call appears. HOLD never
- * alerts on its own.
+ * Every workflow run notifies — no confidence/verdict-change gating. A user
+ * authoring their own cron schedule is expected to pace how often a workflow
+ * fires; the connector doesn't second-guess that.
  *
  * Settings are read per send, not captured at boot, so a token saved from the
  * dashboard takes effect immediately instead of at the next restart.
+ *
+ * Telegram delivery fans out to every subscriber (src/subscribers.js) rather
+ * than a single configured chat id — the Subscription page is how chats
+ * opt in.
  */
 
 const enabled = () => {
   const s = settings.get();
-  return Boolean((s.telegramBotToken && s.telegramChatId) || s.webhookUrl);
+  return Boolean((s.telegramBotToken && subscribers.list().length) || s.webhookUrl);
 };
 
 async function shouldNotify(signal) {
   if (!enabled()) return { send: false, reason: 'no channel configured' };
   if (signal.error) return { send: false, reason: 'errored run' };
-
-  const { minConfidence } = settings.get();
-  const verdict = String(signal.verdict || '').toUpperCase();
-  const confidence = Number(signal.confidence ?? 0);
-
-  if (verdict === 'HOLD') return { send: false, reason: 'hold is not actionable' };
-  if (confidence < minConfidence) {
-    return { send: false, reason: `confidence ${confidence} below ${minConfidence}` };
-  }
-
-  const previous = await store.previousVerdict(signal.symbol, signal.id);
-  if (previous === verdict) return { send: false, reason: `verdict unchanged (${verdict})` };
-
-  return { send: true, reason: previous ? `verdict changed ${previous} -> ${verdict}` : `first ${verdict}` };
+  return { send: true, reason: 'workflow run' };
 }
 
 function format(signal) {
@@ -53,14 +43,26 @@ function format(signal) {
   return lines.filter(Boolean).join('\n');
 }
 
-async function sendTelegram(text, s = settings.get()) {
-  const url = `https://api.telegram.org/bot${s.telegramBotToken}/sendMessage`;
+/** Send one message to one chat. */
+async function sendTelegramTo(chatId, text, botToken) {
+  const url = `https://api.telegram.org/bot${botToken}/sendMessage`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ chat_id: s.telegramChatId, text, disable_web_page_preview: true }),
+    body: JSON.stringify({ chat_id: chatId, text, disable_web_page_preview: true }),
   });
   if (!res.ok) throw new Error(`telegram ${res.status}: ${(await res.text()).slice(0, 200)}`);
+}
+
+/** Fan a message out to every subscribed chat. Per-chat failures don't stop the rest. */
+async function broadcastTelegram(text, s = settings.get()) {
+  const delivered = [];
+  const errors = [];
+  for (const sub of subscribers.list()) {
+    try { await sendTelegramTo(sub.chatId, text, s.telegramBotToken); delivered.push(sub.chatId); }
+    catch (err) { errors.push(`${sub.chatId}: ${err.message}`); }
+  }
+  return { delivered, errors };
 }
 
 async function sendWebhook(signal, text, s = settings.get()) {
@@ -82,9 +84,10 @@ async function maybeSend(signal) {
   const delivered = [];
   const errors = [];
 
-  if (s.telegramBotToken && s.telegramChatId) {
-    try { await sendTelegram(text, s); delivered.push('telegram'); }
-    catch (err) { errors.push(`telegram: ${err.message}`); }
+  if (s.telegramBotToken && subscribers.list().length) {
+    const result = await broadcastTelegram(text, s);
+    if (result.delivered.length) delivered.push('telegram');
+    errors.push(...result.errors.map((e) => `telegram: ${e}`));
   }
   if (s.webhookUrl) {
     try { await sendWebhook(signal, text, s); delivered.push('webhook'); }
@@ -103,7 +106,7 @@ async function sendTest() {
   if (!enabled()) throw Object.assign(new Error('No channel configured'), { status: 400 });
 
   const text = [
-    '✅ ICT Trading Console — test message',
+    '✅ Trading Console — test message',
     `sent ${new Date().toISOString().replace('T', ' ').slice(0, 16)} UTC`,
     '',
     'If you can read this, alert delivery is working.',
@@ -112,9 +115,10 @@ async function sendTest() {
   const delivered = [];
   const errors = [];
 
-  if (s.telegramBotToken && s.telegramChatId) {
-    try { await sendTelegram(text, s); delivered.push('telegram'); }
-    catch (err) { errors.push(`telegram: ${err.message}`); }
+  if (s.telegramBotToken && subscribers.list().length) {
+    const result = await broadcastTelegram(text, s);
+    if (result.delivered.length) delivered.push('telegram');
+    errors.push(...result.errors.map((e) => `telegram: ${e}`));
   }
   if (s.webhookUrl) {
     try { await sendWebhook({ test: true }, text, s); delivered.push('webhook'); }
@@ -124,4 +128,42 @@ async function sendTest() {
   return { sent: delivered.length > 0, delivered, errors };
 }
 
-module.exports = { maybeSend, shouldNotify, format, enabled, sendTest };
+/** Verifies the bot token is valid and reachable — no message sent. */
+async function checkConnection() {
+  const s = settings.get();
+  if (!s.telegramBotToken) throw Object.assign(new Error('No Telegram bot token configured'), { status: 400 });
+
+  const res = await fetch(`https://api.telegram.org/bot${s.telegramBotToken}/getMe`);
+  const data = await res.json().catch(() => null);
+  if (!data?.ok) throw Object.assign(new Error(data?.description || `Telegram API responded ${res.status}`), { status: 502 });
+  return data.result;
+}
+
+/** Chats that have messaged the bot but aren't subscribed yet, for the "pick to subscribe" list. */
+async function fetchPendingChats() {
+  const s = settings.get();
+  if (!s.telegramBotToken) throw Object.assign(new Error('No Telegram bot token configured'), { status: 400 });
+
+  const res = await fetch(`https://api.telegram.org/bot${s.telegramBotToken}/getUpdates`);
+  const data = await res.json().catch(() => null);
+  if (!data?.ok) throw Object.assign(new Error(data?.description || `Telegram API responded ${res.status}`), { status: 502 });
+
+  const known = new Set(subscribers.list().map((sub) => String(sub.chatId)));
+  const seen = new Map();
+  for (const update of data.result || []) {
+    const chat = update.message?.chat;
+    if (!chat || known.has(String(chat.id))) continue;
+    seen.set(String(chat.id), {
+      chatId: String(chat.id),
+      name: [chat.first_name, chat.last_name].filter(Boolean).join(' ') || chat.title || String(chat.id),
+      username: chat.username || null,
+      type: chat.type,
+    });
+  }
+  return [...seen.values()];
+}
+
+module.exports = {
+  maybeSend, shouldNotify, format, enabled, sendTest,
+  sendTelegramTo, broadcastTelegram, checkConnection, fetchPendingChats,
+};

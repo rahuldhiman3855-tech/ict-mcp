@@ -5,8 +5,11 @@ import { Redirect } from "react-router-dom"
 import Workflows from "../pages/Workflows/index"
 import Agents from "../pages/Agents/index"
 import Crons from "../pages/Crons/index"
-import Analytics from "../pages/Analytics/index"
 import Logs from "../pages/Logs/index"
+import Settings from "../pages/Settings/index"
+import Health from "../pages/Health/index"
+import MCPConfig from "../pages/MCPConfig/index"
+import Subscription from "../pages/Subscription/index"
 
 // Authentication related pages
 import Login from "../pages/Authentication/Login"
@@ -24,8 +27,11 @@ const userRoutes = [
   { path: "/workflows", component: Workflows },
   { path: "/agents", component: Agents },
   { path: "/crons", component: Crons },
-  { path: "/analytics", component: Analytics },
   { path: "/logs", component: Logs },
+  { path: "/settings", component: Settings },
+  { path: "/health", component: Health },
+  { path: "/mcp-config", component: MCPConfig },
+  { path: "/subscription", component: Subscription },
   { path: "/profile", component: UserProfile },
 
   // this route should be at the end of all other routes

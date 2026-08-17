@@ -16,6 +16,7 @@ import NonAuthLayout from "./components/NonAuthLayout"
 
 // Import scss
 import "./assets/scss/theme.scss"
+import "./App.css"
 
 
 import fakeBackend from "./helpers/AuthType/fakeBackend"

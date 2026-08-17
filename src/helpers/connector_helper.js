@@ -29,9 +29,67 @@ connectorApi.interceptors.response.use(
   }
 )
 
-// Watchlist and symbols
-export async function getWatchlist() {
-  const response = await connectorApi.get("/api/watchlist")
+// Symbol check (pass/fail only)
+export async function checkSymbol(symbol) {
+  const response = await connectorApi.post("/api/symbols/check", { symbol })
+  return response.data
+}
+
+// Agents (user-authored LLM steps)
+export async function listAgents() {
+  const response = await connectorApi.get("/api/agents")
+  return response.data
+}
+
+export async function createAgent(agent) {
+  const response = await connectorApi.post("/api/agents", agent)
+  return response.data
+}
+
+export async function updateAgent(id, agent) {
+  const response = await connectorApi.put(`/api/agents/${encodeURIComponent(id)}`, agent)
+  return response.data
+}
+
+export async function deleteAgent(id) {
+  const response = await connectorApi.delete(`/api/agents/${encodeURIComponent(id)}`)
+  return response.data
+}
+
+// Workflows (ordered agent chains + cron)
+export async function listWorkflows() {
+  const response = await connectorApi.get("/api/workflows")
+  return response.data
+}
+
+export async function createWorkflow(workflow) {
+  const response = await connectorApi.post("/api/workflows", workflow)
+  return response.data
+}
+
+export async function updateWorkflow(id, workflow) {
+  const response = await connectorApi.put(`/api/workflows/${encodeURIComponent(id)}`, workflow)
+  return response.data
+}
+
+export async function deleteWorkflow(id) {
+  const response = await connectorApi.delete(`/api/workflows/${encodeURIComponent(id)}`)
+  return response.data
+}
+
+/** Fire-and-forget: poll signals for the result. */
+export async function runWorkflow(id) {
+  const response = await connectorApi.post(`/api/workflows/${encodeURIComponent(id)}/run`)
+  return response.data
+}
+
+export async function startWorkflowSchedule(id) {
+  const response = await connectorApi.post(`/api/workflows/${encodeURIComponent(id)}/schedule/start`)
+  return response.data
+}
+
+export async function stopWorkflowSchedule(id) {
+  const response = await connectorApi.post(`/api/workflows/${encodeURIComponent(id)}/schedule/stop`)
   return response.data
 }
 
@@ -50,84 +108,6 @@ export async function getSignals({ limit = 50, symbol = null, latest = false } =
 
 export async function getSymbolSignals(symbol) {
   const response = await connectorApi.get(`/api/signals/${encodeURIComponent(symbol)}`)
-  return response.data
-}
-
-// Runs
-export async function runSymbol(symbol) {
-  const response = await connectorApi.post("/api/runs", { symbol })
-  return response.data
-}
-
-// Agents — the full roster including disabled ones, with prompts.
-export async function getAgents() {
-  const response = await connectorApi.get("/api/agents")
-  return response.data
-}
-
-/** Patch one agent; omitted fields keep their current value. */
-export async function updateAgent(id, changes) {
-  const response = await connectorApi.patch(
-    `/api/agents/${encodeURIComponent(id)}`,
-    changes
-  )
-  return response.data
-}
-
-// Workflow DAG
-export async function getWorkflow() {
-  const response = await connectorApi.get("/api/workflow")
-  return response.data
-}
-
-/**
- * Build a run without executing it: agent prompts carrying the ICT facts for
- * this symbol, plus base64 chart images for the vision agents. Rendering the
- * four timeframes takes a while, hence the extended timeout.
- */
-export async function prepareRun(symbol) {
-  const response = await connectorApi.post(
-    "/api/prepare",
-    { symbol },
-    { timeout: 180000 }
-  )
-  return response.data
-}
-
-/** Run one agent. Passing images routes it to the vision model. */
-export async function executeAgent(agent, userInput, cancelToken) {
-  const response = await connectorApi.post(
-    "/api/execute",
-    {
-      systemPrompt: agent.systemPrompt,
-      userInput,
-      temperature: agent.temperature,
-      maxTokens: agent.maxTokens,
-      images: agent.images || [],
-    },
-    { timeout: 180000, cancelToken }
-  )
-  return response.data
-}
-
-// axios 0.21 predates AbortController support, so a run is stopped through a
-// CancelToken instead.
-export function createCancelSource() {
-  return axios.CancelToken.source()
-}
-
-export function isCancel(err) {
-  return axios.isCancel(err)
-}
-
-// Scheduler
-export async function getScheduler() {
-  const response = await connectorApi.get("/api/scheduler")
-  return response.data
-}
-
-export async function schedulerAction(action) {
-  const response = await connectorApi.post(`/api/scheduler/${action}`)
   return response.data
 }
 
@@ -153,9 +133,82 @@ export async function getHealth() {
   return response.data
 }
 
+/** Thorough check — exercises DB, chart server, Telegram, and every MCP. */
+export async function getFullHealth() {
+  const response = await connectorApi.get("/api/health/full")
+  return response.data
+}
+
 // Chart snapshot URL helper
 export function chartUrl(path) {
   if (!path) return null
   const filename = path.replace(/^\/snapshots\//, "")
   return `${CHART_URL}/snapshots/${filename}`
+}
+
+// MCP Config: built-in + user-added MCP servers, tool discovery and testing
+export async function listMcps() {
+  const response = await connectorApi.get("/api/mcps")
+  return response.data
+}
+
+export async function createMcp(mcp) {
+  const response = await connectorApi.post("/api/mcps", mcp)
+  return response.data
+}
+
+export async function updateMcp(id, mcp) {
+  const response = await connectorApi.put(`/api/mcps/${encodeURIComponent(id)}`, mcp)
+  return response.data
+}
+
+export async function deleteMcp(id) {
+  const response = await connectorApi.delete(`/api/mcps/${encodeURIComponent(id)}`)
+  return response.data
+}
+
+export async function listMcpTools(id) {
+  const response = await connectorApi.get(`/api/mcps/${encodeURIComponent(id)}/tools`)
+  return response.data
+}
+
+export async function callMcpTool(id, tool, args) {
+  const response = await connectorApi.post(`/api/mcps/${encodeURIComponent(id)}/call`, { tool, arguments: args })
+  return response.data
+}
+
+// Subscription page: Telegram bot config, connection test, subscribers
+export async function getTelegramConfig() {
+  const response = await connectorApi.get("/api/telegram/config")
+  return response.data
+}
+
+export async function saveTelegramConfig(config) {
+  const response = await connectorApi.post("/api/telegram/config", config)
+  return response.data
+}
+
+export async function testTelegramConnection() {
+  const response = await connectorApi.post("/api/telegram/test")
+  return response.data
+}
+
+export async function listPendingTelegramChats() {
+  const response = await connectorApi.get("/api/telegram/pending")
+  return response.data
+}
+
+export async function listTelegramSubscribers() {
+  const response = await connectorApi.get("/api/telegram/subscribers")
+  return response.data
+}
+
+export async function addTelegramSubscriber(subscriber) {
+  const response = await connectorApi.post("/api/telegram/subscribers", subscriber)
+  return response.data
+}
+
+export async function removeTelegramSubscriber(id) {
+  const response = await connectorApi.delete(`/api/telegram/subscribers/${encodeURIComponent(id)}`)
+  return response.data
 }
