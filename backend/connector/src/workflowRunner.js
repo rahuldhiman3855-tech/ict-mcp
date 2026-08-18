@@ -31,6 +31,25 @@ async function checkSymbol(symbol) {
 /** Number(null) is 0, not NaN — this must reject null/''/undefined explicitly. */
 const numOrNull = (v) => (v !== null && v !== undefined && v !== '' && Number.isFinite(Number(v)) ? Number(v) : null);
 
+function normalizeVerdict(parsed) {
+  const verdict = String(parsed?.verdict || '').toUpperCase();
+  return {
+    verdict: ['BUY', 'SELL', 'HOLD'].includes(verdict) ? verdict : null,
+    confidence: numOrNull(parsed?.confidence),
+    entry: numOrNull(parsed?.entry),
+    stop: numOrNull(parsed?.stop),
+    targets: Array.isArray(parsed?.targets) ? parsed.targets.map(Number).filter(Number.isFinite) : [],
+    riskReward: numOrNull(parsed?.riskReward),
+    rationale: String(parsed?.rationale || '').slice(0, 1200),
+    invalidation: String(parsed?.invalidation || '').slice(0, 600),
+  };
+}
+
+/**
+ * Fallback path only: used when the final step's structured tool-call
+ * verdict is unavailable (e.g. the step errored outright). The normal path
+ * is llm.completeVerdict()'s forced tool call, handled in runOneAgent.
+ */
 function parseVerdict(raw) {
   const cleaned = String(raw || '').replace(/^```(?:json)?/gm, '').replace(/```$/gm, '').trim();
   const start = cleaned.indexOf('{');
@@ -39,18 +58,7 @@ function parseVerdict(raw) {
     return { verdict: null, error: 'final agent produced no parseable JSON verdict' };
   }
   try {
-    const parsed = JSON.parse(cleaned.slice(start, end + 1));
-    const verdict = String(parsed.verdict || '').toUpperCase();
-    return {
-      verdict: ['BUY', 'SELL', 'HOLD'].includes(verdict) ? verdict : null,
-      confidence: numOrNull(parsed.confidence),
-      entry: numOrNull(parsed.entry),
-      stop: numOrNull(parsed.stop),
-      targets: Array.isArray(parsed.targets) ? parsed.targets.map(Number).filter(Number.isFinite) : [],
-      riskReward: numOrNull(parsed.riskReward),
-      rationale: String(parsed.rationale || '').slice(0, 1200),
-      invalidation: String(parsed.invalidation || '').slice(0, 600),
-    };
+    return normalizeVerdict(JSON.parse(cleaned.slice(start, end + 1)));
   } catch (err) {
     return { verdict: null, error: `verdict JSON did not parse: ${err.message}` };
   }
@@ -92,33 +100,45 @@ async function gatherContext(symbol) {
   return { facts, chartPath };
 }
 
-async function runOneAgent(agent, { facts, chartDataUri, priorOutputs }) {
+async function runOneAgent(agent, { facts, chartDataUri, priorOutputs, isFinal }) {
   const started = Date.now();
   const priorText = priorOutputs.length
     ? `\n\nPrior agent outputs:\n${priorOutputs.map((p) => `[${p.label}]\n${p.output}`).join('\n\n')}`
     : '';
   const input = `${facts}${priorText}`;
+  const images = agent.vision && chartDataUri ? [chartDataUri] : [];
 
   try {
-    const client = llm.getClient();
-    const images = agent.vision && chartDataUri ? [chartDataUri] : [];
-    const completion = await client.chat.completions.create({
-      model: llm.modelFor(null, images.length > 0),
-      temperature: Number(agent.temperature ?? 0.3),
-      max_tokens: Number(agent.max_tokens ?? 1024),
-      messages: [
-        { role: 'system', content: agent.system_prompt },
-        llm.buildUserMessage(input, images),
-      ],
-    });
-    const output = completion.choices[0]?.message?.content || '';
+    const temperature = Number(agent.temperature ?? 0.3);
+    const maxTokens = Number(agent.max_tokens ?? 1024);
+    const common = { systemPrompt: agent.system_prompt, input, temperature, maxTokens };
+
+    // The final step gets a forced submit_verdict tool call instead of a
+    // free-text completion, so its output is structured data, not prose to
+    // regex out. Otherwise: vision agents go to Gemini, text agents to
+    // Cohere (see src/llm.js for the cross-provider fallback rules).
+    let output;
+    let usage;
+    let verdict;
+    if (isFinal) {
+      const result = await llm.completeVerdict({ ...common, images });
+      output = result.output;
+      usage = result.usage;
+      verdict = normalizeVerdict(result.args);
+    } else if (images.length) {
+      ({ output, usage } = await llm.completeVision({ ...common, images }));
+    } else {
+      ({ output, usage } = await llm.complete(common));
+    }
+
     return {
       id: String(agent.id),
       label: agent.name,
       status: 'ok',
       input,
       output,
-      tokenCount: llm.countTokens(completion.usage, agent.system_prompt + input, output),
+      verdict,
+      tokenCount: llm.countTokens(usage, agent.system_prompt + input, output),
       latencyMs: Date.now() - started,
       error: null,
     };
@@ -197,7 +217,12 @@ async function runWorkflow(workflowId, { trigger = 'manual' } = {}) {
         if (i === steps.length - 1) mechanicalResult = result;
         continue;
       }
-      const trace = await runOneAgent(step, { facts, chartDataUri, priorOutputs: traces.map((t) => ({ label: t.label, output: t.output })) });
+      const trace = await runOneAgent(step, {
+        facts,
+        chartDataUri,
+        priorOutputs: traces.map((t) => ({ label: t.label, output: t.output })),
+        isFinal: i === steps.length - 1,
+      });
       traces.push(trace);
     }
 
@@ -215,7 +240,7 @@ async function runWorkflow(workflowId, { trigger = 'manual' } = {}) {
         rationale: mechanicalResult.rationale || '',
         invalidation: mechanicalResult.invalidation || '',
       }
-      : parseVerdict(traces.at(-1)?.output);
+      : traces.at(-1)?.verdict || parseVerdict(traces.at(-1)?.output);
 
     const tokensTotal = traces.reduce((sum, t) => sum + (t.tokenCount || 0), 0);
     const mergedCharts = { ...(chartPath ? { '15': chartPath } : {}), ...(mechanicalResult?.charts || {}) };

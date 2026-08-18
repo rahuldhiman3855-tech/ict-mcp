@@ -35,7 +35,7 @@ const renderBatch = (payload) => post('/api/charts/batch', payload);
 const snapshotUrl = (relative) => `${config.chartServerUrl}${relative}`;
 
 /**
- * Fetch a rendered PNG as a data URI. DeepInfra cannot reach chart-server on
+ * Fetch a rendered PNG as a data URI. Gemini cannot reach chart-server on
  * the internal network, so vision prompts must carry the bytes inline.
  */
 async function snapshotDataUri(relative) {

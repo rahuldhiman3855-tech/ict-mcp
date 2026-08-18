@@ -79,7 +79,7 @@ const definitions = [
 const byName = new Map(definitions.map((d) => [d.name, d]));
 
 /**
- * OpenAI/DeepInfra `tools` array.
+ * OpenAI-style `tools` array (still used for the MCP/REST tool-calling surface).
  *
  * `io: 'input'` matters: it emits the schema as the caller supplies it, so
  * fields carrying a `.default()` stay optional. The output view would mark
