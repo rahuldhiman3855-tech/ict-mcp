@@ -23,9 +23,14 @@ const { createLimiter, withRetry } = require('./rateLimiter');
 const COHERE_MODEL = process.env.COHERE_MODEL || 'command-a-03-2025';
 const COHERE_VISION_MODEL = process.env.COHERE_VISION_MODEL || 'command-a-vision-07-2025';
 
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.1-pro-preview';
-const GEMINI_MODEL_FALLBACK = process.env.GEMINI_MODEL_FALLBACK || 'gemini-3.6-flash';
-const GEMINI_MODEL_FALLBACK_LITE = process.env.GEMINI_MODEL_FALLBACK_LITE || 'gemini-3.5-flash-lite';
+// gemini-3.1-pro-preview returns a hard 0-quota 429 on free-tier/trial keys
+// (billing required, not just rate-limited) — gemini-3.6-flash is the
+// strongest model actually reachable on a trial key, so it leads. Pro-preview
+// stays last in the chain rather than being dropped, so a key with billing
+// enabled still gets to use it without a code change.
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.6-flash';
+const GEMINI_MODEL_FALLBACK = process.env.GEMINI_MODEL_FALLBACK || 'gemini-3.5-flash-lite';
+const GEMINI_MODEL_FALLBACK_LITE = process.env.GEMINI_MODEL_FALLBACK_LITE || 'gemini-3.1-pro-preview';
 
 const COHERE_RPM_LIMIT = Number(process.env.COHERE_RPM_LIMIT || 20);
 const GEMINI_RPM_LIMIT = Number(process.env.GEMINI_RPM_LIMIT || 20);
