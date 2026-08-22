@@ -14,12 +14,19 @@ const positionMonitor = require('./mechanical/monitor');
  * Separately, a single always-on interval watches open mechanical
  * positions regardless of any workflow's own cron — a position stays
  * monitored even after the workflow that opened it changes schedule.
+ *
+ * reconcileAll() is also self-healing: it re-runs on a fixed interval so
+ * that if the very first (startup) call under-schedules for any transient
+ * reason (e.g. a DB race at boot), the schedule corrects itself within
+ * one interval instead of silently staying wrong until the next restart.
  */
 
 const POSITION_CHECK_INTERVAL_MS = Number(process.env.POSITION_CHECK_INTERVAL_MS || 15 * 60 * 1000);
+const SELF_HEAL_INTERVAL_MS = Number(process.env.CRON_SELF_HEAL_INTERVAL_MS || 10 * 60 * 1000);
 
 const tasks = new Map(); // workflowId -> ScheduledTask
 let positionMonitorTimer = null;
+let selfHealTimer = null;
 
 function validate(expression) {
   return cron.validate(expression);
@@ -64,6 +71,15 @@ async function reconcileAll() {
       positionMonitor.checkOpenPositions().catch(() => {});
     }, POSITION_CHECK_INTERVAL_MS);
     positionMonitorTimer.unref();
+  }
+
+  if (!selfHealTimer) {
+    selfHealTimer = setInterval(() => {
+      reconcileAll().catch((err) => {
+        console.error('[cronScheduler] self-heal reconcile failed:', err.message);
+      });
+    }, SELF_HEAL_INTERVAL_MS);
+    selfHealTimer.unref();
   }
 
   return { active: tasks.size, positionMonitorActive: Boolean(positionMonitorTimer) };

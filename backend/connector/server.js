@@ -688,7 +688,10 @@ if (require.main === module) {
     console.log(`mcp-connector listening on http://localhost:${config.port}`);
     console.log(`  MCP endpoint   /mcp  (${tools.definitions.length} tools)`);
     console.log(`  chart-server   ${config.chartServerUrl}`);
-    const { active } = await cronScheduler.reconcileAll().catch(() => ({ active: 0 }));
+    const { active } = await cronScheduler.reconcileAll().catch((err) => {
+      console.error('  cron jobs      startup reconcile FAILED:', err.message);
+      return { active: 0 };
+    });
     console.log(`  cron jobs      ${active} active`);
   });
 }
