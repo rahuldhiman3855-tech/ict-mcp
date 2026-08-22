@@ -9,14 +9,14 @@ $sidebar-bg: #1e2938;
 $sidebar-menu-item-color: #7f879c;
 $sidebar-menu-sub-item-color: #7f879c;
 $sidebar-menu-item-icon-color: #7f879c;
-$sidebar-menu-item-hover-color: #3b5de7;
-$sidebar-menu-item-active-color: #3b5de7;
+$sidebar-menu-item-hover-color: #ff9f1c;
+$sidebar-menu-item-active-color: #ff9f1c;
 $sidebar-width: 250px;
 $sidebar-collapsed-width: 70px;
 $sidebar-width-sm: 180px;
 
 // Vertical Sidebar - Dark
-$sidebar-dark-bg: #2a3042; //2c313a
+$sidebar-dark-bg: #22252b;
 $sidebar-dark-menu-item-color: #a6b0cf;
 $sidebar-dark-menu-sub-item-color: #79829c;
 $sidebar-dark-menu-item-icon-color: #6a7187;
@@ -31,7 +31,7 @@ $header-bg: rgba(#ffffff, 0.03);
 $header-item-color: #555b6d;
 
 // Topbar - Dark
-$header-dark-bg: #3b5de7;
+$header-dark-bg: #22252b;
 $header-dark-item-color: #e9ecef;
 
 // Topbar Search
@@ -70,7 +70,7 @@ $table-dark-border-color: tint-color($gray-800, 7.5%);
 $display-none: block;
 $display-block: none;
 
-$font-family-secondary: "DM Sans", sans-serif;
+$font-family-secondary: "Inter", sans-serif;
 
 // Variables
 //
@@ -113,10 +113,10 @@ $indigo: #564ab1;
 $purple: #6f42c1;
 $pink: #e83e8c;
 $red: #ff715b;
-$orange: #f1734f;
+$orange: #ff9f1c;
 $yellow: #eeb902;
 $green: #45cb85;
-$teal: #050505;
+$teal: #2b6469;
 $cyan: #0caadc;
 
 $colors: ();
@@ -140,8 +140,8 @@ $colors: map-merge(
   $colors
 );
 
-$primary: $blue;
-$secondary: $gray-600;
+$primary: $orange;
+$secondary: $teal;
 $success: $green;
 $info: $cyan;
 $warning: $yellow;
@@ -471,7 +471,8 @@ $aspect-ratios: (
 // Font, line-height, and color for body text, headings, and more.
 
 // stylelint-disable value-keyword-case
-$font-family-sans-serif: "SF UI Text", sans-serif;
+$font-family-sans-serif: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+  Roboto, Helvetica, Arial, sans-serif;
 $font-family-monospace: SFMono-Regular, Menlo, Monaco, Consolas,
   "Liberation Mono", "Courier New", monospace;
 $font-family-base: $font-family-sans-serif;

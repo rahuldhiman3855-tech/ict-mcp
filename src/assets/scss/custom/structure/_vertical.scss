@@ -494,8 +494,8 @@ body[data-sidebar-size="small"] {
   .footer {
     left: $sidebar-width-sm;
   }
-  .has-arrow:after,
-  .badge {
+  #sidebar-menu .has-arrow:after,
+  #sidebar-menu .badge {
     display: none !important;
   }
 

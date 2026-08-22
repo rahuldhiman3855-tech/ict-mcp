@@ -2,8 +2,8 @@ const mysql = require('mysql2/promise');
 require('dotenv').config();
 
 const pool = mysql.createPool({
-  host: process.env.DB_HOST || 'mysql-albums-albums.g.aivencloud.com',
-  port: parseInt(process.env.DB_PORT) || 18808,
+  host: process.env.DB_HOST || 'localhost',
+  port: parseInt(process.env.DB_PORT) || 3306,
   user: process.env.DB_USER || 'avnadmin',
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME || 'defaultdb',

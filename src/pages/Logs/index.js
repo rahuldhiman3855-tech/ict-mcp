@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react"
 import { Container, Row, Col, Card, CardBody, Badge, Collapse, Input, FormGroup, Spinner, Alert } from "reactstrap"
-import { getSignals } from "../../helpers/connector_helper"
+import { getSignals, chartUrl } from "../../helpers/connector_helper"
+import ChartLightbox from "../../components/Common/ChartLightbox"
 
 const STATUS_ICON = {
   ok: { icon: "mdi-check-circle", color: "text-success" },
@@ -17,12 +18,67 @@ const getVerdictBadge = (verdict) => {
   }
 }
 
+// Preferred left-to-right order for chart thumbnails — HTF to execution
+// timeframe. Anything not in this list (e.g. the old single-chart "15" key
+// from pre-MTF workflows) just sorts after it.
+const CHART_ORDER = ["1W", "1D", "4H", "1H", "15M", "15"]
+const sortChartKeys = (keys) => [...keys].sort((a, b) => {
+  const ia = CHART_ORDER.indexOf(a), ib = CHART_ORDER.indexOf(b)
+  return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib)
+})
+
+/** HTF per-timeframe scores from one independent agent (the Visual/Quantitative Analyst roles). */
+const AssessmentsTable = ({ assessments }) => (
+  <div className="table-responsive mb-2">
+    <table className="table table-sm table-bordered mb-0">
+      <thead className="table-light">
+        <tr><th>TF</th><th>Bias</th><th>Score</th><th>Confidence</th><th>Notes</th></tr>
+      </thead>
+      <tbody>
+        {assessments.map((a) => (
+          <tr key={a.timeframe}>
+            <td className="fw-medium">{a.timeframe}</td>
+            <td>{a.bias}</td>
+            <td>{a.bias_score}</td>
+            <td>{a.confidence}</td>
+            <td className="small text-muted">{a.market_structure}{a.poi ? ` · ${a.poi}` : ""}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+)
+
+/** Deterministic consensus math step — both agents' scores side by side, plus the unified/disagreement values. */
+const ConsensusTable = ({ perTimeframe }) => (
+  <div className="table-responsive mb-2">
+    <table className="table table-sm table-bordered mb-0">
+      <thead className="table-light">
+        <tr><th>TF</th><th>Weight</th><th>Agent 1</th><th>Agent 2</th><th>Unified S</th><th>Disagreement D</th></tr>
+      </thead>
+      <tbody>
+        {perTimeframe.map((tf) => (
+          <tr key={tf.timeframe}>
+            <td className="fw-medium">{tf.timeframe}</td>
+            <td>{tf.weight}</td>
+            <td>{tf.agent1 ? `${tf.agent1.bias} (${tf.agent1.bias_score})` : "—"}</td>
+            <td>{tf.agent2 ? `${tf.agent2.bias} (${tf.agent2.bias_score})` : "—"}</td>
+            <td>{typeof tf.S === "number" ? tf.S.toFixed(2) : tf.S}</td>
+            <td>{typeof tf.D === "number" ? tf.D.toFixed(2) : tf.D}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+)
+
 const Logs = () => {
   const [runs, setRuns] = useState([])
   const [filter, setFilter] = useState("all")
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [openIds, setOpenIds] = useState(new Set())
+  const [lightboxUrl, setLightboxUrl] = useState(null)
 
   useEffect(() => {
     const load = async () => {
@@ -94,7 +150,7 @@ const Logs = () => {
                     <i className={`mdi ${isOpen ? "mdi-chevron-down" : "mdi-chevron-right"}`}></i>
                     <small className="text-muted">{new Date(run.at).toLocaleString()}</small>
                     <span className="fw-medium">{run.workflowName || run.label || run.symbol}</span>
-                    <Badge bg="light" text="dark">{run.symbol}</Badge>
+                    <Badge color="light" className="text-dark">{run.symbol}</Badge>
                     {getVerdictBadge(run.verdict)}
                     {run.error && <Badge color="danger">error</Badge>}
                   </div>
@@ -104,6 +160,24 @@ const Logs = () => {
                   <CardBody className="border-top pt-3">
                     {run.error && <Alert color="danger">{run.error}</Alert>}
                     {run.rationale && <p className="mb-3">{run.rationale}</p>}
+                    {run.charts && Object.keys(run.charts).length > 0 && (
+                      <div className="mb-3">
+                        <small className="text-muted d-block mb-1">Charts passed to vision agents:</small>
+                        <div className="d-flex gap-2 flex-wrap">
+                          {sortChartKeys(Object.keys(run.charts)).map((label) => run.charts[label] && (
+                            <div key={label} className="text-center">
+                              <img
+                                src={chartUrl(run.charts[label])}
+                                alt={label}
+                                style={{ width: "110px", height: "auto", borderRadius: "4px", cursor: "pointer", border: "1px solid #dee2e6" }}
+                                onClick={() => setLightboxUrl(chartUrl(run.charts[label]))}
+                              />
+                              <div className="small text-muted">{label}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                     {(run.agents || []).map((agent) => {
                       const style = STATUS_ICON[agent.status] || { icon: "mdi-circle-outline", color: "text-muted" }
                       return (
@@ -114,6 +188,8 @@ const Logs = () => {
                             {agent.latencyMs != null && <small className="text-muted ms-2">{agent.latencyMs}ms</small>}
                           </div>
                           {agent.error && <Alert color="danger" className="py-1 px-2 small">{agent.error}</Alert>}
+                          {agent.structured?.assessments && <AssessmentsTable assessments={agent.structured.assessments} />}
+                          {agent.structured?.perTimeframe && <ConsensusTable perTimeframe={agent.structured.perTimeframe} />}
                           {agent.input && (
                             <div className="mb-2">
                               <small className="text-muted d-block mb-1">Input / data given to this step:</small>
@@ -145,6 +221,8 @@ const Logs = () => {
           )}
         </Container>
       </div>
+
+      <ChartLightbox url={lightboxUrl} isOpen={Boolean(lightboxUrl)} toggle={() => setLightboxUrl(null)} />
     </React.Fragment>
   )
 }

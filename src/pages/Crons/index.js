@@ -86,7 +86,7 @@ const Crons = () => {
                         {workflows.map((wf) => (
                           <tr key={wf.id}>
                             <td className="fw-medium">{wf.name}</td>
-                            <td><Badge bg="light" text="dark">{wf.symbol}</Badge></td>
+                            <td><Badge color="light" className="text-dark">{wf.symbol}</Badge></td>
                             <td><code>{wf.cron_expression}</code></td>
                             <td>
                               <Badge color={wf.enabled ? "success" : "secondary"}>
@@ -99,14 +99,14 @@ const Crons = () => {
                                 <Button
                                   size="sm"
                                   color={wf.enabled ? "warning" : "success"}
-                                  outline
                                   disabled={busy === wf.id}
                                   onClick={() => handleToggle(wf)}
                                 >
-                                  <i className={`mdi ${wf.enabled ? "mdi-stop" : "mdi-play"}`}></i>
+                                  <i className={`mdi ${wf.enabled ? "mdi-stop" : "mdi-play"} me-1`}></i>
+                                  {wf.enabled ? "Stop" : "Start"}
                                 </Button>
                                 <Button size="sm" color="info" outline disabled={busy === wf.id} onClick={() => handleTrigger(wf)}>
-                                  <i className="mdi mdi-lightning-bolt"></i>
+                                  <i className="mdi mdi-lightning-bolt me-1"></i>Run Now
                                 </Button>
                               </div>
                             </td>

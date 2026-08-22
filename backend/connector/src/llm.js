@@ -259,6 +259,81 @@ async function completeVerdict({ systemPrompt, input, images = [], temperature =
   }
 }
 
+/**
+ * Generic forced-tool-call completion with a caller-supplied schema and
+ * provider order. Used by the MTF pipeline (src/mtf/mtfRunner.js).
+ *
+ * Cohere's vision model (command-a-vision-07-2025) rejects tool-calling
+ * outright (400 TOOL_USE_NOT_SUPPORTED) — only its text model supports
+ * function calling — so callers must never pass images with a Cohere-only
+ * or Cohere-first providerOrder; route vision calls through Gemini only.
+ *
+ * providerOrder may be a single provider (no fallback attempted — used when
+ * a call must stay on one vendor by design, e.g. the MTF pipeline's
+ * text-reasoning agents) or two (second is a fallback if the first fails).
+ *
+ * @returns {Promise<{ args: Object, output: string, usage: Object, model: string, provider: string }>}
+ */
+async function completeStructured({
+  systemPrompt,
+  input,
+  images = [],
+  temperature = 0.3,
+  maxTokens = 1536,
+  toolName,
+  toolDescription,
+  schema,
+  providerOrder = ['gemini', 'cohere'],
+}) {
+  const tryGemini = () =>
+    callGemini({
+      systemPrompt,
+      input,
+      images,
+      temperature,
+      maxTokens,
+      tools: [{ functionDeclarations: [{ name: toolName, description: toolDescription, parametersJsonSchema: schema }] }],
+      toolConfig: { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: [toolName] } },
+    }).then(({ response, model }) => {
+      const call = response.functionCalls?.[0];
+      if (!call?.args) throw new Error(`Gemini did not return a ${toolName} tool call`);
+      return { args: call.args, output: response.text || JSON.stringify(call.args), usage: response.usageMetadata, model, provider: 'gemini' };
+    });
+
+  const tryCohere = () =>
+    callCohere({
+      systemPrompt,
+      input,
+      images,
+      temperature,
+      maxTokens,
+      vision: images.length > 0,
+      tools: [{ type: 'function', function: { name: toolName, description: toolDescription, parameters: schema } }],
+      toolChoice: 'REQUIRED',
+    }).then(({ response, model }) => {
+      const call = response.message?.toolCalls?.[0];
+      if (!call?.function?.arguments) throw new Error(`Cohere did not return a ${toolName} tool call`);
+      const args = JSON.parse(call.function.arguments);
+      return { args, output: response.message?.toolPlan || cohereText(response) || JSON.stringify(args), usage: response.usage, model, provider: 'cohere' };
+    });
+
+  const runners = { gemini: tryGemini, cohere: tryCohere };
+  const [firstLabel, secondLabel] = providerOrder;
+
+  if (!secondLabel) return runners[firstLabel]();
+
+  try {
+    return await runners[firstLabel]();
+  } catch (firstErr) {
+    console.warn(`[llm] ${firstLabel} structured call failed, falling back to ${secondLabel}:`, firstErr?.message || firstErr);
+    try {
+      return await runners[secondLabel]();
+    } catch (secondErr) {
+      throw bothProvidersFailed(firstLabel, firstErr, secondLabel, secondErr);
+    }
+  }
+}
+
 function countTokens(usage, promptText, outputText) {
   if (usage) {
     if (usage.totalTokenCount) return usage.totalTokenCount; // Gemini
@@ -286,6 +361,7 @@ module.exports = {
   complete,
   completeVision,
   completeVerdict,
+  completeStructured,
   countTokens,
   describeError,
   buildGeminiContents,

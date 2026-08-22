@@ -1,6 +1,40 @@
 services:
 
   # ==========================================================
+  # MYSQL
+  # ==========================================================
+
+  mysql:
+    image: mysql:8
+    container_name: ict-cron-mysql
+
+    ports:
+      - "3306:3306"
+
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+      MYSQL_DATABASE: ${DB_NAME:-defaultdb}
+      MYSQL_USER: ${DB_USER:-avnadmin}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
+
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./backend/mysql-init:/docker-entrypoint-initdb.d:ro
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${DB_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+    networks:
+      - backend
+
+
+  # ==========================================================
   # CHARTS
   # ==========================================================
 
@@ -90,6 +124,9 @@ services:
       COHERE_RPM_LIMIT: ${COHERE_RPM_LIMIT:-20}
 
       GEMINI_API_KEY: ${GEMINI_API_KEY:?set GEMINI_API_KEY in .env}
+      GEMINI_API_KEY_2: ${GEMINI_API_KEY_2:-}
+      GEMINI_API_KEY_3: ${GEMINI_API_KEY_3:-}
+      GEMINI_API_KEY_4: ${GEMINI_API_KEY_4:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.6-flash}
       GEMINI_MODEL_FALLBACK: ${GEMINI_MODEL_FALLBACK:-gemini-3.5-flash-lite}
       GEMINI_MODEL_FALLBACK_LITE: ${GEMINI_MODEL_FALLBACK_LITE:-gemini-3.1-pro-preview}
@@ -99,8 +136,8 @@ services:
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       WEBHOOK_URL: ${WEBHOOK_URL:-}
 
-      DB_HOST: ${DB_HOST:?set DB_HOST in .env}
-      DB_PORT: ${DB_PORT:-3306}
+      DB_HOST: mysql
+      DB_PORT: 3306
       DB_USER: ${DB_USER:?set DB_USER in .env}
       DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD in .env}
       DB_NAME: ${DB_NAME:?set DB_NAME in .env}
@@ -123,6 +160,8 @@ services:
 
     depends_on:
       charts:
+        condition: service_healthy
+      mysql:
         condition: service_healthy
 
     restart: unless-stopped
@@ -202,6 +241,9 @@ services:
 # ============================================================
 
 volumes:
+
+  mysql-data:
+    name: ict-mysql-data
 
   charts-node-modules:
     name: ict-charts-node-modules

@@ -3,6 +3,7 @@
 const { z } = require('zod');
 
 const chart = require('./chartClient');
+const { computeConsensus, TIMEFRAMES } = require('./mtf/consensus');
 
 /**
  * The tool registry. One definition per tool, consumed by two surfaces:
@@ -73,6 +74,57 @@ const definitions = [
         cached: result.cached,
       };
     },
+  },
+  {
+    name: 'render_chart_batch',
+    title: 'Render multiple timeframes at once',
+    description: 'Render several timeframes of one symbol in a single call (e.g. 1W/1D/4H/1H/15M) instead of one request per chart. Returns a URL per timeframe.',
+    schema: z.object({
+      symbol: symbolArg,
+      theme: z.enum(['dark', 'light']).default('dark'),
+      charts: z.array(z.object({
+        interval: intervalArg,
+        bars: barsArg,
+      })).min(1).max(8).describe('One entry per timeframe to render.'),
+    }),
+    handler: async (args) => {
+      const batch = await chart.renderBatch({
+        symbol: args.symbol,
+        theme: args.theme,
+        charts: args.charts,
+      });
+      return {
+        symbol: batch.symbol,
+        charts: (batch.charts || []).map((c) => ({
+          interval: c.interval,
+          url: c.error ? undefined : chart.snapshotUrl(c.url),
+          path: c.error ? undefined : c.url,
+          cached: c.cached,
+          error: c.error,
+        })),
+      };
+    },
+  },
+
+  {
+    name: 'compute_mtf_consensus',
+    title: 'Compute multi-timeframe consensus score',
+    description: 'Deterministic math combining two independent agents\' per-timeframe bias scores into a Composite Bias Score and a Global Disagreement Metric. Weights: 1W 0.40, 1D 0.30, 4H 0.20, 1H 0.10. Not an LLM call — exact and reproducible, always call this instead of estimating the math yourself.',
+    schema: z.object({
+      agent1Assessments: z.array(z.object({
+        timeframe: z.enum(TIMEFRAMES),
+        bias: z.enum(['BULLISH', 'BEARISH', 'NEUTRAL']).optional(),
+        bias_score: z.number().min(-1).max(1),
+        confidence: z.number().min(0).max(1),
+      })).describe('One entry per HTF timeframe from the first independent agent.'),
+      agent2Assessments: z.array(z.object({
+        timeframe: z.enum(TIMEFRAMES),
+        bias: z.enum(['BULLISH', 'BEARISH', 'NEUTRAL']).optional(),
+        bias_score: z.number().min(-1).max(1),
+        confidence: z.number().min(0).max(1),
+      })).describe('One entry per HTF timeframe from the second, independent agent.'),
+    }),
+    handler: async ({ agent1Assessments, agent2Assessments }) => computeConsensus(agent1Assessments, agent2Assessments),
   },
 ];
 

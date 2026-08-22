@@ -1,0 +1,84 @@
+services:
+
+  # ==========================================================
+  # CHARTS
+  # ==========================================================
+
+  charts:
+    image: ghcr.io/rahuldhiman3855-tech/ict-mcp-charts:${IMAGE_TAG:-latest}
+    container_name: ict-cron-charts
+
+    ports:
+      - "3000:3000"
+
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      SNAPSHOT_DIR: /app/snapshots
+
+      SNAPSHOT_TTL_MS: ${SNAPSHOT_TTL_MS:-604800000}
+      MAX_CONCURRENT_RENDERS: ${MAX_CONCURRENT_RENDERS:-3}
+      TV_AUTH_TOKEN: ${TV_AUTH_TOKEN:-}
+
+    volumes:
+      - chart-snapshots:/app/snapshots
+
+    shm_size: "512mb"
+
+    restart: unless-stopped
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+    networks:
+      - backend
+
+
+  # ==========================================================
+  # REACT
+  # ==========================================================
+
+  react:
+    image: ghcr.io/rahuldhiman3855-tech/ict-mcp-react:${IMAGE_TAG:-latest}
+    container_name: ict-cron-manager
+
+    ports:
+      - "3001:3001"
+
+    depends_on:
+      charts:
+        condition: service_healthy
+
+    restart: unless-stopped
+
+    networks:
+      - backend
+
+
+# ============================================================
+# VOLUMES
+# ============================================================
+
+volumes:
+  chart-snapshots:
+    name: ict-chart-snapshots
+
+
+# ============================================================
+# NETWORK
+# ============================================================
+
+networks:
+  backend:
+    name: ict-backend
+    driver: bridge

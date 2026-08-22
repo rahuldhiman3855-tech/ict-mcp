@@ -94,49 +94,32 @@ const Agents = () => {
           </Row>
 
           <Row>
-            {agents.map((agent) => {
-              const isMechanical = agent.kind === "mechanical"
-              return (
-                <Col md="6" lg="4" key={agent.id} className="mb-3">
-                  <Card className={`h-100${isMechanical ? " border-info" : ""}`}>
-                    <CardBody>
-                      <div className="d-flex justify-content-between align-items-start mb-2">
-                        <h5 className="card-title mb-0">{agent.name}</h5>
-                        {isMechanical
-                          ? <Badge color="warning">mechanical</Badge>
-                          : Boolean(agent.vision) && <Badge color="info">vision</Badge>}
-                      </div>
-                      {isMechanical ? (
-                        <p className="text-muted small">{agent.description}</p>
-                      ) : (
-                        <>
-                          <p className="text-muted small" style={{ maxHeight: "4.5em", overflow: "hidden" }}>
-                            {agent.system_prompt}
-                          </p>
-                          <div className="small text-muted mb-3">
-                            temp {agent.temperature} · max {agent.max_tokens} tokens
-                          </div>
-                        </>
-                      )}
-                      {isMechanical ? (
-                        <small className="text-muted">
-                          Fixed — configure its shared parameters on the <a href="/settings">Settings</a> page.
-                        </small>
-                      ) : (
-                        <div className="d-flex gap-2">
-                          <Button size="sm" color="secondary" outline onClick={() => openEdit(agent)}>
-                            <i className="mdi mdi-pencil"></i>
-                          </Button>
-                          <Button size="sm" color="danger" outline onClick={() => handleDelete(agent)}>
-                            <i className="mdi mdi-delete"></i>
-                          </Button>
-                        </div>
-                      )}
-                    </CardBody>
-                  </Card>
-                </Col>
-              )
-            })}
+            {agents.map((agent) => (
+              <Col md="6" lg="4" key={agent.id} className="mb-3">
+                <Card className="h-100">
+                  <CardBody>
+                    <div className="d-flex justify-content-between align-items-start mb-2">
+                      <h5 className="card-title mb-0">{agent.name}</h5>
+                      {Boolean(agent.vision) && <Badge color="info">vision</Badge>}
+                    </div>
+                    <p className="text-muted small" style={{ maxHeight: "4.5em", overflow: "hidden" }}>
+                      {agent.system_prompt}
+                    </p>
+                    <div className="small text-muted mb-3">
+                      temp {agent.temperature} · max {agent.max_tokens} tokens
+                    </div>
+                    <div className="d-flex gap-2">
+                      <Button size="sm" color="secondary" outline onClick={() => openEdit(agent)}>
+                        <i className="mdi mdi-pencil"></i>
+                      </Button>
+                      <Button size="sm" color="danger" outline onClick={() => handleDelete(agent)}>
+                        <i className="mdi mdi-delete"></i>
+                      </Button>
+                    </div>
+                  </CardBody>
+                </Card>
+              </Col>
+            ))}
             {!agents.length && (
               <Col><p className="text-muted">No agents yet. Create one to start building a workflow.</p></Col>
             )}

@@ -92,30 +92,64 @@ const Workflows = () => {
     }
   }
 
+  // A workflow's agentIds is stage-based: each entry is a single agent id
+  // (a sequential step) or an array of ids (a parallel group, e.g. two
+  // independent scorers reading the same data). Normalize to always-array
+  // form for editing, so toggling/reordering never has to special-case it.
+  const asStages = (agentIds) => (agentIds || []).map((s) => (Array.isArray(s) ? s : [s]))
+
   const toggleAgent = (id) => {
-    setForm((f) => ({
-      ...f,
-      agentIds: f.agentIds.includes(id) ? f.agentIds.filter((a) => a !== id) : [...f.agentIds, id],
-    }))
+    setForm((f) => {
+      const stages = asStages(f.agentIds)
+      const flat = stages.flat()
+      if (flat.includes(id)) {
+        const next = stages.map((s) => s.filter((a) => a !== id)).filter((s) => s.length > 0)
+        return { ...f, agentIds: next }
+      }
+      // New agents default to their own sequential stage — use the ∥ button
+      // to merge one into the stage before it (run in parallel).
+      return { ...f, agentIds: [...stages, [id]] }
+    })
   }
 
+  /** Merge this agent's stage into the stage before it (run in parallel), or split it back out into its own stage if it's already grouped. */
+  const toggleParallel = (id) => {
+    setForm((f) => {
+      const stages = asStages(f.agentIds)
+      const stageIdx = stages.findIndex((s) => s.includes(id))
+      if (stageIdx === -1) return f
+      if (stages[stageIdx].length > 1) {
+        const withoutAgent = stages[stageIdx].filter((a) => a !== id)
+        const next = [...stages]
+        next.splice(stageIdx, 1, withoutAgent, [id])
+        return { ...f, agentIds: next }
+      }
+      if (stageIdx === 0) return f // nothing before the first stage to merge with
+      const next = [...stages]
+      next[stageIdx - 1] = [...next[stageIdx - 1], id]
+      next.splice(stageIdx, 1)
+      return { ...f, agentIds: next }
+    })
+  }
+
+  /** Moves this agent's whole stage — a parallel pair moves together. */
   const moveAgent = (id, dir) => {
     setForm((f) => {
-      const ids = [...f.agentIds]
-      const i = ids.indexOf(id)
+      const stages = asStages(f.agentIds)
+      const i = stages.findIndex((s) => s.includes(id))
       const j = i + dir
-      if (i < 0 || j < 0 || j >= ids.length) return f
-      ;[ids[i], ids[j]] = [ids[j], ids[i]]
-      return { ...f, agentIds: ids }
+      if (i < 0 || j < 0 || j >= stages.length) return f
+      ;[stages[i], stages[j]] = [stages[j], stages[i]]
+      return { ...f, agentIds: stages }
     })
   }
 
   const mechanicalError = (() => {
-    const idx = form.agentIds.indexOf(0)
-    if (idx !== -1 && idx !== form.agentIds.length - 1) {
-      return "The mechanical agent must be the last step in the workflow."
-    }
-    return null
+    const stages = asStages(form.agentIds)
+    const mechIdx = stages.findIndex((s) => s.includes(0))
+    if (mechIdx === -1) return null
+    const isLastAlone = mechIdx === stages.length - 1 && stages[mechIdx].length === 1
+    return isLastAlone ? null : "The mechanical agent must be the last step in the workflow, and run alone (not in a parallel group)."
   })()
 
   const handleSave = async (e) => {
@@ -225,7 +259,7 @@ const Workflows = () => {
                       <div className="border-top pt-2 mt-2">
                         <div className="d-flex align-items-center gap-2 mb-1">
                           {getVerdictBadge(runResult.verdict)}
-                          {runResult.confidence != null && <small className="text-muted">confidence {(runResult.confidence * 100).toFixed(0)}%</small>}
+                          {runResult.confidence != null && <small className="text-muted">confidence {Math.round(runResult.confidence)}%</small>}
                         </div>
                         {runResult.rationale && <p className="small mb-1">{runResult.rationale}</p>}
                         {runResult.agents?.map((a) => {
@@ -279,36 +313,62 @@ const Workflows = () => {
             </FormGroup>
             <FormGroup className="mb-3">
               <Label>Agents (in order)</Label>
+              <p className="small text-muted mb-2">
+                Checked agents run in the numbered order shown. The <strong>∥</strong> button merges an agent into
+                the step right before it, so both run in parallel (e.g. two independent scorers reading the same
+                data) instead of one after the other.
+              </p>
               {!agents.length && <p className="small text-muted">No agents yet — create one on the Agents page first.</p>}
               {mechanicalError && <Alert color="warning" className="py-1 px-2 small">{mechanicalError}</Alert>}
-              {agents.map((agent) => {
-                const idx = form.agentIds.indexOf(agent.id)
-                return (
-                  <div key={agent.id} className="d-flex align-items-center gap-2 mb-1">
-                    <input
-                      type="checkbox"
-                      className="form-check-input"
-                      checked={idx !== -1}
-                      onChange={() => toggleAgent(agent.id)}
-                    />
-                    <span className="flex-grow-1">
-                      {idx !== -1 && <Badge color="secondary" className="me-2">{idx + 1}</Badge>}
-                      {agent.name}
-                      {agent.kind === "mechanical" && <Badge color="warning" className="ms-2">mechanical</Badge>}
-                    </span>
-                    {idx !== -1 && (
-                      <>
-                        <Button size="sm" color="link" onClick={() => moveAgent(agent.id, -1)} disabled={idx === 0}>
-                          <i className="mdi mdi-arrow-up"></i>
-                        </Button>
-                        <Button size="sm" color="link" onClick={() => moveAgent(agent.id, 1)} disabled={idx === form.agentIds.length - 1}>
-                          <i className="mdi mdi-arrow-down"></i>
-                        </Button>
-                      </>
-                    )}
-                  </div>
-                )
-              })}
+              {(() => {
+                const stages = asStages(form.agentIds)
+                const membership = new Map()
+                stages.forEach((s, stageIdx) => s.forEach((id) => membership.set(id, { stageIdx, stageSize: s.length })))
+
+                return agents.map((agent) => {
+                  const info = membership.get(agent.id)
+                  const selected = Boolean(info)
+                  return (
+                    <div key={agent.id} className="d-flex align-items-center gap-2 mb-1">
+                      <input
+                        type="checkbox"
+                        className="form-check-input"
+                        checked={selected}
+                        onChange={() => toggleAgent(agent.id)}
+                      />
+                      <span className="flex-grow-1">
+                        {selected && (
+                          <Badge color="secondary" className="me-2">
+                            {info.stageIdx + 1}{info.stageSize > 1 ? " ∥" : ""}
+                          </Badge>
+                        )}
+                        {agent.name}
+                        {agent.kind === "mechanical" && <Badge color="warning" className="ms-2">mechanical</Badge>}
+                      </span>
+                      {selected && (
+                        <>
+                          <Button
+                            size="sm"
+                            color="info"
+                            outline={info.stageSize <= 1}
+                            onClick={() => toggleParallel(agent.id)}
+                            disabled={info.stageSize === 1 && info.stageIdx === 0}
+                            title={info.stageSize > 1 ? "Split into its own step" : "Merge into the step before it (run in parallel)"}
+                          >
+                            ∥
+                          </Button>
+                          <Button size="sm" color="link" onClick={() => moveAgent(agent.id, -1)} disabled={info.stageIdx === 0}>
+                            <i className="mdi mdi-arrow-up"></i>
+                          </Button>
+                          <Button size="sm" color="link" onClick={() => moveAgent(agent.id, 1)} disabled={info.stageIdx === stages.length - 1}>
+                            <i className="mdi mdi-arrow-down"></i>
+                          </Button>
+                        </>
+                      )}
+                    </div>
+                  )
+                })
+              })()}
             </FormGroup>
             <FormGroup className="mb-3">
               <Label>Cron Expression (optional)</Label>

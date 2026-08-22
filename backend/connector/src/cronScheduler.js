@@ -25,11 +25,16 @@ function validate(expression) {
   return cron.validate(expression);
 }
 
+// workflowId arrives as a number from DB rows (reconcileAll) but as a
+// string from Express route params (reconcileOne, via req.params.id) —
+// normalize so both paths key the same Map entry instead of silently
+// leaking the other type's task on every update.
 function stopTask(workflowId) {
-  const task = tasks.get(workflowId);
+  const key = Number(workflowId);
+  const task = tasks.get(key);
   if (task) {
     task.stop();
-    tasks.delete(workflowId);
+    tasks.delete(key);
   }
 }
 
@@ -72,7 +77,7 @@ async function reconcileOne(workflowId) {
     const task = cron.schedule(workflow.cron_expression, () => {
       workflowRunner.runWorkflow(workflowId, { trigger: 'cron' }).catch(() => {});
     });
-    tasks.set(workflowId, task);
+    tasks.set(Number(workflowId), task);
   }
 }
 

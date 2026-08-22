@@ -33,9 +33,9 @@
 // dropped in favour of `.bg-x`. Nothing then sets a background, so `.badge`'s
 // white text renders on the parent's white card — invisible. Restoring the
 // variants here fixes every <Badge> in the app at once.
-// The theme's global $min-contrast-ratio is 1.8, which lets color-contrast()
-// settle for white on mid-tone greens and blues. Badge text is small, so ask
-// for the 4.5 AA threshold here rather than loosening it app-wide.
+// $min-contrast-ratio is 4.5 app-wide (_variables.scss) — the explicit 4.5
+// here is now redundant with that default, kept only so this stays correct
+// if the global ratio is ever loosened again for other components.
 @each $color, $value in $theme-colors {
   .badge-#{$color} {
     background-color: $value;

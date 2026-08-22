@@ -7,6 +7,10 @@
 //
 // Environment:
 //   GEMINI_API_KEY=your_api_key
+//   GEMINI_API_KEY_2, GEMINI_API_KEY_3, GEMINI_API_KEY_4 (optional) — extra
+//   keys rotated through before dropping to a weaker model. Free-tier quota
+//   is per (key, model), so more keys buys more headroom on the strongest
+//   model rather than forcing an early downgrade in trade quality.
 //
 // Usage:
 //   const { requestGemini } = require("./gemini");
@@ -48,12 +52,20 @@
 
 const { GoogleGenAI } = require('@google/genai');
 
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-});
+const API_KEYS = [
+  process.env.GEMINI_API_KEY,
+  process.env.GEMINI_API_KEY_2,
+  process.env.GEMINI_API_KEY_3,
+  process.env.GEMINI_API_KEY_4,
+].filter(Boolean);
+
+const clients = API_KEYS.map((apiKey) => new GoogleGenAI({ apiKey }));
 
 /**
- * Execute Gemini models sequentially with fallbacks.
+ * Execute Gemini models sequentially with fallbacks. For each model tier,
+ * every configured key is tried before moving to the next (weaker) model —
+ * quality degrades only when a whole tier is genuinely exhausted, not on
+ * the first quota hit.
  *
  * Highest-thinking model should be first,
  * followed by cheaper/lower-thinking models.
@@ -65,7 +77,8 @@ const ai = new GoogleGenAI({
  * @returns {Promise<{
  *   response: Object,
  *   model: string,
- *   fallbackIndex: number
+ *   fallbackIndex: number,
+ *   keyIndex: number
  * }>}
  */
 function requestGemini({
@@ -84,68 +97,78 @@ function requestGemini({
     );
   }
 
+  if (!clients.length) {
+    return Promise.reject(
+      new Error('requestGemini: no GEMINI_API_KEY (or _2/_3/_4) configured')
+    );
+  }
+
   let lastError = null;
 
-  function tryFallback(index) {
-    if (index >= fallbacks.length) {
+  function tryModel(modelIndex) {
+    if (modelIndex >= fallbacks.length) {
       const error = new Error(
         `All Gemini fallback models failed. Last error: ${
           lastError?.message || 'Unknown error'
         }`
       );
-
       error.cause = lastError;
-
       return Promise.reject(error);
     }
 
-    const fallback = fallbacks[index];
-
+    const fallback = fallbacks[modelIndex];
     if (!fallback || !fallback.model) {
-      lastError = new Error(
-        `Fallback at index ${index} is missing "model"`
-      );
-
-      return tryFallback(index + 1);
+      lastError = new Error(`Fallback at index ${modelIndex} is missing "model"`);
+      return tryModel(modelIndex + 1);
     }
 
+    return tryKey(modelIndex, 0);
+  }
+
+  function tryKey(modelIndex, keyIndex) {
+    if (keyIndex >= clients.length) {
+      // Every key exhausted for this model — only now step down a tier.
+      return tryModel(modelIndex + 1);
+    }
+
+    const fallback = fallbacks[modelIndex];
     const requestParams = {
       model: fallback.model,
       contents,
       ...(fallback.params || {}),
     };
+    const keyTag = clients.length > 1 ? ` (key ${keyIndex + 1}/${clients.length})` : '';
 
     console.log(
-      `[Gemini] Trying ${fallback.model} (${index + 1}/${fallbacks.length})`
+      `[Gemini] Trying ${fallback.model}${keyTag} (${modelIndex + 1}/${fallbacks.length})`
     );
 
-    return ai.models
+    return clients[keyIndex].models
       .generateContent(requestParams)
       .then((response) => {
-        console.log(`[Gemini] Success: ${fallback.model}`);
-
+        console.log(`[Gemini] Success: ${fallback.model}${keyTag}`);
         return {
           response,
           model: fallback.model,
-          fallbackIndex: index,
+          fallbackIndex: modelIndex,
+          keyIndex,
         };
       })
       .catch((error) => {
         lastError = error;
-
         console.warn(
-          `[Gemini] Failed: ${fallback.model}`,
+          `[Gemini] Failed: ${fallback.model}${keyTag}`,
           error?.message || error
         );
-
-        return tryFallback(index + 1);
+        return tryKey(modelIndex, keyIndex + 1);
       });
   }
 
   // Deliberately Promise-based, no async/await.
-  return tryFallback(0);
+  return tryModel(0);
 }
 
 module.exports = {
   requestGemini,
+  keyCount: clients.length,
 };

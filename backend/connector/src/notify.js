@@ -30,10 +30,14 @@ async function shouldNotify(signal) {
 }
 
 function format(signal) {
-  const arrow = signal.verdict === 'BUY' ? '🟢' : signal.verdict === 'SELL' ? '🔴' : '⚪';
+  const verdict = String(signal.verdict || '');
+  const arrow = verdict.startsWith('BUY') ? '🟢' : verdict.startsWith('SELL') ? '🔴' : '⚪';
   const lines = [
-    `${arrow} ${signal.verdict} — ${signal.label || signal.symbol}`,
-    `confidence ${(Number(signal.confidence) * 100).toFixed(0)}%  ·  ${signal.timeframe || 'H1'}`,
+    `${arrow} ${verdict} — ${signal.label || signal.symbol}`,
+    signal.matchedScenario ? `scenario: ${signal.matchedScenario}` : null,
+    signal.confidence !== null && signal.confidence !== undefined && Number.isFinite(Number(signal.confidence))
+      ? `confidence ${Math.round(Number(signal.confidence))}%  ·  ${signal.timeframe || 'H1'}`
+      : null,
     signal.entry != null ? `entry ${signal.entry}` : null,
     signal.stop != null ? `stop ${signal.stop}` : null,
     Array.isArray(signal.targets) && signal.targets.length ? `targets ${signal.targets.join(', ')}` : null,

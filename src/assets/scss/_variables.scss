@@ -12,7 +12,7 @@ $sidebar-menu-item-color: #5f6b77;
 $sidebar-menu-sub-item-color: #707d8a;
 $sidebar-menu-item-icon-color: #707d8a;
 $sidebar-menu-item-hover-color: #383c40;
-$sidebar-menu-item-active-color: #3b5de7;
+$sidebar-menu-item-active-color: #ff9f1c;
 $sidebar-width: 250px;
 $sidebar-collapsed-width: 70px;
 $sidebar-width-sm: 180px;
@@ -74,7 +74,7 @@ $table-dark-border-color: tint-color($gray-800, 7.5%);
 $display-none: none;
 $display-block: block;
 
-$font-family-secondary: "DM Sans", sans-serif;
+$font-family-secondary: "Inter", sans-serif;
 
 // Variables
 //
@@ -117,11 +117,12 @@ $indigo: #564ab1;
 $purple: #6f42c1;
 $pink: #e83e8c;
 $red: #ff715b;
-$orange: #f1734f;
+$orange: #ff9f1c;
 $yellow: #eeb902;
 $green: #45cb85;
-$teal: #050505;
+$teal: #2b6469;
 $cyan: #0caadc;
+$navy: #22252b;
 
 $colors: ();
 // stylelint-disable-next-line scss/dollar-variable-default
@@ -144,14 +145,14 @@ $colors: map-merge(
   $colors
 );
 
-$primary: $blue;
-$secondary: $gray-600;
+$primary: $orange;
+$secondary: $teal;
 $success: $green;
 $info: $cyan;
 $warning: $yellow;
 $danger: $red;
-$light: $gray-200;
-$dark: $gray-800;
+$light: #f2f2f4;
+$dark: $navy;
 
 $theme-colors: ();
 // stylelint-disable-next-line scss/dollar-variable-default
@@ -172,7 +173,7 @@ $theme-colors: map-merge(
 
 // The contrast ratio to reach against white, to determine if color changes from "light" to "dark". Acceptable values for WCAG 2.0 are 3, 4.5 and 7.
 // See https://www.w3.org/TR/WCAG20/#visual-audio-contrast-contrast
-$min-contrast-ratio: 1.8;
+$min-contrast-ratio: 4.5;
 
 // Customize the light and dark text colors for use in our color contrast function.
 $color-contrast-dark: $black;
@@ -350,7 +351,7 @@ $position-values: (
 //
 // Settings for the `<body>` element.
 
-$body-bg: #f3f5f7;
+$body-bg: #f2f2f4;
 $body-color: $gray-600;
 $body-text-align: null;
 
@@ -436,16 +437,16 @@ $border-widths: (
   5: 5px,
 );
 
-$border-color: $gray-200;
+$border-color: $gray-400;
 
-$border-radius: 0.25rem;
-$border-radius-sm: 0.2rem;
-$border-radius-lg: 0.4rem;
+$border-radius: 0.5rem;
+$border-radius-sm: 0.375rem;
+$border-radius-lg: 0.75rem;
 $border-radius-pill: 50rem;
 
-$box-shadow: 0 0.75rem 1.5rem rgba(18, 38, 63, 0.03);
-$box-shadow-sm: 0 0.125rem 0.25rem rgba($black, 0.075);
-$box-shadow-lg: 0 0.2rem 2rem rgba(0, 0, 0, 0.12);
+$box-shadow: 0 0.5rem 1.5rem rgba(18, 38, 63, 0.08);
+$box-shadow-sm: 0 0.125rem 0.5rem rgba(18, 38, 63, 0.06);
+$box-shadow-lg: 0 1rem 3rem rgba(18, 38, 63, 0.12);
 $box-shadow-inset: inset 0 1px 2px rgba($black, 0.075);
 
 $component-active-color: $white;
@@ -475,7 +476,8 @@ $aspect-ratios: (
 // Font, line-height, and color for body text, headings, and more.
 
 // stylelint-disable value-keyword-case
-$font-family-sans-serif: "SF UI Text", sans-serif;
+$font-family-sans-serif: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI",
+  Roboto, Helvetica, Arial, sans-serif;
 $font-family-monospace: SFMono-Regular, Menlo, Monaco, Consolas,
   "Liberation Mono", "Courier New", monospace;
 $font-family-base: $font-family-sans-serif;
@@ -1114,9 +1116,9 @@ $pagination-border-radius-lg: $border-radius-lg;
 
 // Cards
 
-$card-spacer-y: 1.25rem;
-$card-spacer-x: 1.25rem;
-$card-title-spacer-y: $spacer / 2;
+$card-spacer-y: 1.5rem;
+$card-spacer-x: 1.5rem;
+$card-title-spacer-y: $spacer * 0.75;
 $card-border-width: 0;
 $card-border-radius: $border-radius;
 $card-border-color: $gray-300;
@@ -1242,9 +1244,9 @@ $toast-header-border-color: rgba(0, 0, 0, 0.05);
 $badge-font-size: 75%;
 $badge-font-weight: $fw-medium;
 $badge-color: $white;
-$badge-padding-y: 0.25em;
-$badge-padding-x: 0.4em;
-$badge-border-radius: $border-radius;
+$badge-padding-y: 0.5em;
+$badge-padding-x: 0.9em;
+$badge-border-radius: $border-radius-pill;
 
 // Modals
 

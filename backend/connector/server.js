@@ -346,7 +346,7 @@ app.post('/api/symbols/check', async (req, res) => {
 app.get('/api/agents', authenticateJWT, async (_req, res) => {
   try {
     const agents = await agentsStore.listAgents();
-    res.json({ agents: [mechanicalAgent.MECHANICAL_AGENT, ...agents] });
+    res.json({ agents });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -354,10 +354,10 @@ app.get('/api/agents', authenticateJWT, async (_req, res) => {
 
 app.post('/api/agents', authenticateJWT, async (req, res) => {
   try {
-    const { name, systemPrompt, temperature, maxTokens, vision } = req.body || {};
+    const { name, systemPrompt, temperature, maxTokens, vision, kind, imageMode, outputSchema } = req.body || {};
     if (!name || !String(name).trim()) return res.status(400).json({ error: 'name is required' });
     if (!systemPrompt || !String(systemPrompt).trim()) return res.status(400).json({ error: 'systemPrompt is required' });
-    const agent = await agentsStore.createAgent({ name, systemPrompt, temperature, maxTokens, vision });
+    const agent = await agentsStore.createAgent({ name, systemPrompt, temperature, maxTokens, vision, kind, imageMode, outputSchema });
     res.json({ agent });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -400,10 +400,16 @@ app.get('/api/workflows', authenticateJWT, async (_req, res) => {
   try {
     const [workflows, agents] = await Promise.all([agentsStore.listWorkflows(), agentsStore.listAgents()]);
     const byId = new Map([mechanicalAgent.MECHANICAL_AGENT, ...agents].map((a) => [a.id, a]));
+    const nameOf = (id) => byId.get(Number(id))?.name || `#${id}`;
     res.json({
       workflows: workflows.map((w) => ({
         ...w,
-        agentNames: w.agent_ids.map((id) => byId.get(id)?.name || `#${id}`),
+        // Each stage is a single agent id (sequential) or an array of ids
+        // (a parallel group) — render a group as "A + B" so it reads as
+        // one step, distinct from the sequential arrow-separated stages.
+        agentNames: w.agent_ids.map((stage) =>
+          Array.isArray(stage) ? stage.map(nameOf).join(' + ') : nameOf(stage)
+        ),
       })),
     });
   } catch (err) {
@@ -411,11 +417,23 @@ app.get('/api/workflows', authenticateJWT, async (_req, res) => {
   }
 });
 
-/** The mechanical agent's structured output becomes the verdict directly — it must be the last step. */
+/**
+ * The mechanical agent's structured output becomes the verdict directly — it
+ * must be the last step, and alone (not inside a parallel group). agentIds
+ * is stage-based: each element is a single agent id or an array of ids for
+ * a parallel group (e.g. the MTF pipeline's two independent HTF scorers).
+ */
 function validateAgentChain(agentIds) {
-  const mechIdx = agentIds.indexOf(mechanicalAgent.MECHANICAL_AGENT_ID);
-  if (mechIdx !== -1 && mechIdx !== agentIds.length - 1) {
-    return 'the mechanical agent must be the last step in the workflow';
+  const flat = agentsStore.flattenAgentIds(agentIds);
+  if (!flat.includes(mechanicalAgent.MECHANICAL_AGENT_ID)) return null;
+
+  const lastStage = agentIds[agentIds.length - 1];
+  const lastStageIsSoloMechanical = !Array.isArray(lastStage) && Number(lastStage) === mechanicalAgent.MECHANICAL_AGENT_ID;
+  const mechanicalAppearsElsewhere = flat.filter((id) => id === mechanicalAgent.MECHANICAL_AGENT_ID).length > 1
+    || agentIds.slice(0, -1).some((stage) => (Array.isArray(stage) ? stage : [stage]).map(Number).includes(mechanicalAgent.MECHANICAL_AGENT_ID));
+
+  if (!lastStageIsSoloMechanical || mechanicalAppearsElsewhere) {
+    return 'the mechanical agent must be the last step in the workflow, and run alone (not in a parallel group)';
   }
   return null;
 }
