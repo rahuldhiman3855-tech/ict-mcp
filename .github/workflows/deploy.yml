@@ -25,8 +25,8 @@ jobs:
             context: .
             dockerfile: Dockerfile
             build_args: |
-              REACT_APP_MCP_CONNECTOR_URL=http://oc1.rahuldhiman.com:3002
-              REACT_APP_CHART_SERVER_URL=http://oc2.rahuldhiman.com:3000
+              REACT_APP_MCP_CONNECTOR_URL=https://oc1.rahuldhiman.com
+              REACT_APP_CHART_SERVER_URL=https://charts.rahuldhiman.com
           - service: connector
             context: backend/connector
             dockerfile: backend/connector/Dockerfile
