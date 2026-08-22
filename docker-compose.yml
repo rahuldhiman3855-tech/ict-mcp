@@ -268,4 +268,4 @@ volumes:
 networks:
   backend:
     name: ict-backend
-    driver: bridge
+    driver: bridgeWE 
