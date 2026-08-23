@@ -78,5 +78,14 @@ jobs:
           TARGET_HOST: ${{ secrets[matrix.host_secret] }}
           TARGET_USER: ${{ secrets.DEPLOY_SSH_USER }}
         run: |
-          ssh -i ~/.ssh/id_deploy "$TARGET_USER@$TARGET_HOST" \
-            'curl -sf localhost:3000/api/health' | grep -q '"ok":true'
+          ssh -i ~/.ssh/id_deploy "$TARGET_USER@$TARGET_HOST" '
+            for i in $(seq 1 15); do
+              if curl -sf localhost:3000/api/health | grep -q "\"ok\":true"; then
+                echo "healthy after ${i} attempt(s)"
+                exit 0
+              fi
+              sleep 2
+            done
+            echo "still unhealthy after 30s"
+            exit 1
+          '
