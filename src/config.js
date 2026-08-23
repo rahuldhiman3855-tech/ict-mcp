@@ -22,8 +22,8 @@ export const TF_FEED_PARAMS = {
 export const SYMBOL = process.env.SYMBOL || "BITSTAMP:BTCUSD";
 export const CHART_SERVER_URL = process.env.CHART_SERVER_URL || "http://localhost:3000";
 
-/** The 20-instrument watchlist used by bin/testSymbols.js and bin/watchLoop.js. */
-export const WATCHLIST = [
+/** The full 20-instrument watchlist — the default, and the source shard split for multi-server deploys. */
+const DEFAULT_WATCHLIST = [
   // Crypto
   "BITSTAMP:BTCUSD",
   "BITSTAMP:ETHUSD",
@@ -49,6 +49,16 @@ export const WATCHLIST = [
   "TVC:SPX",
   "TVC:NDX",
 ];
+
+/**
+ * Set WATCHLIST_OVERRIDE (comma-separated symbols) to run a subset of
+ * DEFAULT_WATCHLIST instead of all 20 — this is how the same codebase runs
+ * a different shard on each server in a multi-server deploy (e.g. oc1 and
+ * oc2 each watching 10 symbols) without diverging the code.
+ */
+export const WATCHLIST = process.env.WATCHLIST_OVERRIDE
+  ? process.env.WATCHLIST_OVERRIDE.split(",").map((s) => s.trim()).filter(Boolean)
+  : DEFAULT_WATCHLIST;
 
 // Composite-score / disagreement thresholds the risk gate uses. Loosened
 // from the original 0.15/0.35/65/35 on 2026-08-23 after a 10-symbol live
