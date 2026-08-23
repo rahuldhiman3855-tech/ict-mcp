@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react"
-import { Container, Row, Col, Card, CardBody, Badge, Collapse, Input, FormGroup, Spinner, Alert } from "reactstrap"
+import { Container, Row, Col, Card, CardBody, Badge, Collapse, Input, FormGroup, Spinner, Alert, Button } from "reactstrap"
 import { getSignals, chartUrl } from "../../helpers/connector_helper"
 import ChartLightbox from "../../components/Common/ChartLightbox"
 
@@ -72,6 +72,8 @@ const ConsensusTable = ({ perTimeframe }) => (
   </div>
 )
 
+const PAGE_SIZE = 25
+
 const Logs = () => {
   const [runs, setRuns] = useState([])
   const [filter, setFilter] = useState("all")
@@ -79,22 +81,31 @@ const Logs = () => {
   const [error, setError] = useState(null)
   const [openIds, setOpenIds] = useState(new Set())
   const [lightboxUrl, setLightboxUrl] = useState(null)
+  const [page, setPage] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
 
   useEffect(() => {
+    let cancelled = false
     const load = async () => {
       try {
         setLoading(true)
-        const data = await getSignals({ limit: 100 })
+        const data = await getSignals({ limit: PAGE_SIZE, offset: page * PAGE_SIZE })
+        if (cancelled) return
         setRuns(data.signals || [])
+        setHasMore(Boolean(data.hasMore))
         setError(null)
       } catch (err) {
-        setError(err.message)
+        if (!cancelled) setError(err.message)
       } finally {
-        setLoading(false)
+        if (!cancelled) setLoading(false)
       }
     }
     load()
-  }, [])
+    return () => { cancelled = true }
+  }, [page])
+
+  // Filtering runs within a page rather than resetting to page 0 keeps the
+  // control simple; a mismatch just means a filtered page can look sparse.
 
   const toggle = (id) => {
     setOpenIds((prev) => {
@@ -219,6 +230,26 @@ const Logs = () => {
           {!filteredRuns.length && (
             <Card><CardBody className="text-center text-muted py-5">No runs yet. Trigger a workflow to generate logs.</CardBody></Card>
           )}
+
+          <div className="d-flex justify-content-between align-items-center mt-3">
+            <Button
+              color="light"
+              size="sm"
+              disabled={page === 0}
+              onClick={() => setPage((p) => Math.max(p - 1, 0))}
+            >
+              <i className="mdi mdi-chevron-left me-1"></i>Prev
+            </Button>
+            <small className="text-muted">Page {page + 1}</small>
+            <Button
+              color="light"
+              size="sm"
+              disabled={!hasMore}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              Next<i className="mdi mdi-chevron-right ms-1"></i>
+            </Button>
+          </div>
         </Container>
       </div>
 

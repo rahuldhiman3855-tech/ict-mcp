@@ -8,6 +8,7 @@ import ChartLightbox from "../../components/Common/ChartLightbox"
 import {
   listWorkflows, createWorkflow, updateWorkflow, deleteWorkflow, runWorkflow,
   listAgents, checkSymbol, getSymbolSignals, chartUrl,
+  startWorkflowSchedule, stopWorkflowSchedule,
 } from "../../helpers/connector_helper"
 
 const EMPTY_FORM = { name: "", symbol: "", agentIds: [], cronExpression: "", enabled: true }
@@ -42,6 +43,7 @@ const Workflows = () => {
   const [running, setRunning] = useState(null) // workflow id currently running
   const [runResult, setRunResult] = useState(null)
   const [lightboxUrl, setLightboxUrl] = useState(null)
+  const [togglingId, setTogglingId] = useState(null)
 
   const load = async () => {
     try {
@@ -177,6 +179,21 @@ const Workflows = () => {
     }
   }
 
+  /** Disabling stops the workflow's live cron task (see cronScheduler.reconcileOne); enabling re-registers it. */
+  const handleToggleEnabled = async (wf) => {
+    try {
+      setTogglingId(wf.id)
+      setError(null)
+      if (wf.enabled) await stopWorkflowSchedule(wf.id)
+      else await startWorkflowSchedule(wf.id)
+      await load()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setTogglingId(null)
+    }
+  }
+
   const handleDelete = async (wf) => {
     try {
       await deleteWorkflow(wf.id)
@@ -235,7 +252,18 @@ const Workflows = () => {
                         <h5 className="card-title mb-0">{wf.name}</h5>
                         <small className="text-muted">{wf.symbol}</small>
                       </div>
-                      <Badge color={wf.enabled ? "success" : "secondary"}>{wf.enabled ? "enabled" : "disabled"}</Badge>
+                      <Button
+                        size="sm"
+                        color={wf.enabled ? "success" : "secondary"}
+                        outline={!wf.enabled}
+                        onClick={() => handleToggleEnabled(wf)}
+                        disabled={togglingId === wf.id}
+                        title={wf.enabled ? "Disable — stops this workflow's cron runs" : "Enable — resumes this workflow's cron runs"}
+                      >
+                        {togglingId === wf.id
+                          ? <Spinner size="sm" />
+                          : <><i className={`mdi ${wf.enabled ? "mdi-toggle-switch" : "mdi-toggle-switch-off"} me-1`}></i>{wf.enabled ? "Enabled" : "Disabled"}</>}
+                      </Button>
                     </div>
                     <div className="small mb-2">
                       Agents: {wf.agentNames?.join(" → ") || "—"}

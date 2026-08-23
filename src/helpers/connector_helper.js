@@ -94,10 +94,11 @@ export async function stopWorkflowSchedule(id) {
 }
 
 // Signals and verdicts
-export async function getSignals({ limit = 50, symbol = null, latest = false } = {}) {
+export async function getSignals({ limit = 50, offset = 0, symbol = null, latest = false } = {}) {
   let path = "/api/signals"
   const params = []
   if (limit) params.push(`limit=${limit}`)
+  if (offset) params.push(`offset=${offset}`)
   if (latest) params.push("latest=true")
   if (symbol) params.push(`symbol=${encodeURIComponent(symbol)}`)
   if (params.length) path += "?" + params.join("&")

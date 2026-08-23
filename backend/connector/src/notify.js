@@ -26,25 +26,73 @@ const enabled = () => {
 async function shouldNotify(signal) {
   if (!enabled()) return { send: false, reason: 'no channel configured' };
   if (signal.error) return { send: false, reason: 'errored run' };
+  if (signal.verdict === 'HOLD') return { send: false, reason: 'HOLD verdict — not sent' };
   return { send: true, reason: 'workflow run' };
+}
+
+const TRIGGER_TYPE_LABELS = {
+  FAIR_VALUE_GAP: 'Fair Value Gap',
+  LIQUIDITY_SWEEP: 'Liquidity Sweep',
+  BREAK_OF_STRUCTURE: 'Break of Structure',
+  CHANGE_OF_CHARACTER: 'Change of Character',
+  SWING_FAILURE_PATTERN: 'Swing Failure Pattern',
+};
+
+const titleCase = (s) => String(s || '').toLowerCase().replace(/^\w/, (c) => c.toUpperCase());
+
+/** One bias line per HTF timeframe (1W/1D/4H/1H) — consensus step (both scorers merged) preferred, a single scorer's own assessments as fallback. */
+function timeframeLines(agents) {
+  const consensus = agents.find((a) => a.structured?.perTimeframe)?.structured;
+  if (consensus) {
+    return consensus.perTimeframe.map((tf) => {
+      const bias = tf.agent1?.bias || tf.agent2?.bias;
+      const poi = tf.agent1?.poi || tf.agent2?.poi;
+      return bias ? `• ${tf.timeframe}: ${titleCase(bias)}${poi ? ` — ${poi}` : ''}` : null;
+    }).filter(Boolean);
+  }
+  const scorer = agents.find((a) => a.structured?.assessments)?.structured;
+  if (scorer) {
+    return scorer.assessments.map((a) =>
+      `• ${a.timeframe}: ${titleCase(a.bias)}${a.poi ? ` — ${a.poi}` : ''}`
+    );
+  }
+  return [];
+}
+
+/** The 15M execution trigger (FVG / liquidity sweep / BOS / CHoCH / SFP) read by the MTF vision agent. */
+function triggerLine(agents) {
+  const exec = agents.find((a) => a.structured?.execution_reading)?.structured.execution_reading;
+  if (!exec || !exec.trigger_found || !exec.trigger_type || exec.trigger_type === 'NONE') return null;
+  const label = TRIGGER_TYPE_LABELS[exec.trigger_type] || titleCase(exec.trigger_type);
+  const direction = exec.direction && exec.direction !== 'NONE' ? ` → ${titleCase(exec.direction)}` : '';
+  const level = exec.key_level != null ? ` @ ${exec.key_level}` : '';
+  return `Trigger (15M): ${label}${direction}${level}`;
 }
 
 function format(signal) {
   const verdict = String(signal.verdict || '');
   const arrow = verdict.startsWith('BUY') ? '🟢' : verdict.startsWith('SELL') ? '🔴' : '⚪';
+  const agents = signal.agents || [];
+  const tfLines = timeframeLines(agents);
+  const trigger = triggerLine(agents);
+
   const lines = [
     `${arrow} ${verdict} — ${signal.label || signal.symbol}`,
-    signal.matchedScenario ? `scenario: ${signal.matchedScenario}` : null,
-    signal.confidence !== null && signal.confidence !== undefined && Number.isFinite(Number(signal.confidence))
-      ? `confidence ${Math.round(Number(signal.confidence))}%  ·  ${signal.timeframe || 'H1'}`
-      : null,
-    signal.entry != null ? `entry ${signal.entry}` : null,
-    signal.stop != null ? `stop ${signal.stop}` : null,
-    Array.isArray(signal.targets) && signal.targets.length ? `targets ${signal.targets.join(', ')}` : null,
-    signal.rationale ? `\n${String(signal.rationale).slice(0, 500)}` : null,
+    tfLines.length ? '' : null,
+    tfLines.length ? 'Timeframe bias:' : null,
+    ...tfLines,
+    trigger ? `\n${trigger}` : null,
+    signal.matchedScenario ? `Setup: ${signal.matchedScenario}` : null,
+    '',
+    `Verdict: ${verdict}${signal.confidence !== null && signal.confidence !== undefined && Number.isFinite(Number(signal.confidence)) ? `  ·  confidence ${Math.round(Number(signal.confidence))}%` : ''}`,
+    signal.entry != null ? `Entry: ${signal.entry}` : null,
+    signal.stop != null ? `Stop: ${signal.stop}` : null,
+    Array.isArray(signal.targets) && signal.targets.length ? `Targets: ${signal.targets.join(', ')}` : null,
+    signal.riskReward != null ? `R:R: ${signal.riskReward}` : null,
+    signal.rationale ? `\nReason: ${String(signal.rationale).slice(0, 300)}` : null,
     '\nAnalysis only — not financial advice.',
   ];
-  return lines.filter(Boolean).join('\n');
+  return lines.filter((l) => l !== null).join('\n');
 }
 
 /** Send one message to one chat. */

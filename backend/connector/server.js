@@ -513,9 +513,12 @@ app.post('/api/workflows/:id/run', authenticateJWT, async (req, res) => {
 app.get('/api/signals', async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit) || 50, 500);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
     const symbol = req.query.symbol || null;
-    const signals = await store.read({ limit, symbol });
-    res.json({ signals });
+    // Fetch one extra row to know whether a next page exists, without a second query.
+    const rows = await store.read({ limit: limit + 1, offset, symbol });
+    const hasMore = rows.length > limit;
+    res.json({ signals: rows.slice(0, limit), hasMore, limit, offset });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }

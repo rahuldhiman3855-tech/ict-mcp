@@ -40,9 +40,10 @@ async function listFiles() {
     .reverse(); // newest day first
 }
 
-/** Read rows newest-first, stopping as soon as `limit` is satisfied. */
-async function read({ limit = 50, symbol = null } = {}) {
+/** Read rows newest-first, skipping `offset` matches and stopping as soon as `limit` is satisfied. */
+async function read({ limit = 50, offset = 0, symbol = null } = {}) {
   const out = [];
+  let skipped = 0;
   for (const name of await listFiles()) {
     const text = await fsp.readFile(path.join(DIR, name), 'utf8').catch(() => '');
     const rows = text.split('\n').filter(Boolean);
@@ -50,6 +51,7 @@ async function read({ limit = 50, symbol = null } = {}) {
       let row;
       try { row = JSON.parse(rows[i]); } catch { continue; }
       if (symbol && row.symbol !== symbol) continue;
+      if (skipped < offset) { skipped++; continue; }
       out.push(row);
       if (out.length >= limit) return out;
     }
