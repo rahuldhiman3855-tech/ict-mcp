@@ -17,8 +17,14 @@ const MAX_CONCURRENT_RENDERS = Number(process.env.MAX_CONCURRENT_RENDERS || 3);
 app.use(cors());
 app.use(express.json({ limit: '256kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
+// maxAge: 0 forces a conditional GET (If-Modified-Since) on every request
+// instead of the browser silently reusing an old fetch — a snapshot URL is
+// content-hashed by request params, not by content, so the file behind it
+// gets overwritten in place on every live re-render. A stale-friendly
+// max-age here would mean a browser never sees a re-render it wasn't
+// already loading fresh, no matter how current the server's file is.
 app.use('/snapshots', express.static(cache.DIR, {
-  maxAge: '15m',
+  maxAge: 0,
   setHeaders: (res) => res.setHeader('Content-Type', 'image/png'),
 }));
 
