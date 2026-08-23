@@ -1,0 +1,82 @@
+name: Deploy to oc1/oc2
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: npm install --legacy-peer-deps
+      - run: npm test
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: oc1
+            host_secret: DEPLOY_OC1_HOST
+          - name: oc2
+            host_secret: DEPLOY_OC2_HOST
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up deploy SSH key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      - name: Rsync code to ${{ matrix.name }}
+        env:
+          TARGET_HOST: ${{ secrets[matrix.host_secret] }}
+          TARGET_USER: ${{ secrets.DEPLOY_SSH_USER }}
+        run: |
+          rsync -az --delete \
+            --exclude='/.git' \
+            --exclude='node_modules' \
+            --exclude='charts/node_modules' \
+            --exclude='charts/snapshots' \
+            --exclude='/logs' \
+            --exclude='/data' \
+            --exclude='.env' \
+            -e "ssh -i ~/.ssh/id_deploy" \
+            ./ "$TARGET_USER@$TARGET_HOST:~/ict-mcp/"
+
+      - name: Install deps and restart PM2 on ${{ matrix.name }}
+        env:
+          TARGET_HOST: ${{ secrets[matrix.host_secret] }}
+          TARGET_USER: ${{ secrets.DEPLOY_SSH_USER }}
+        run: |
+          ssh -i ~/.ssh/id_deploy "$TARGET_USER@$TARGET_HOST" '
+            set -e
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+            cd ~/ict-mcp
+            npm install --legacy-peer-deps
+            (cd charts && npm install)
+            pm2 restart ecosystem.config.cjs
+            pm2 save
+          '
+
+      - name: Verify ${{ matrix.name }} charts service is healthy
+        env:
+          TARGET_HOST: ${{ secrets[matrix.host_secret] }}
+          TARGET_USER: ${{ secrets.DEPLOY_SSH_USER }}
+        run: |
+          ssh -i ~/.ssh/id_deploy "$TARGET_USER@$TARGET_HOST" \
+            'curl -sf localhost:3000/api/health' | grep -q '"ok":true'
