@@ -16,7 +16,10 @@ services:
       PORT: 3000
       SNAPSHOT_DIR: /app/snapshots
 
-      SNAPSHOT_TTL_MS: ${SNAPSHOT_TTL_MS:-604800000}
+      # 15 min — matches cache.js's own default. Every real caller now sends
+      # live:true and bypasses this anyway; this is just the near-simultaneous
+      # dedup window, not a "how stale is acceptable" knob.
+      SNAPSHOT_TTL_MS: ${SNAPSHOT_TTL_MS:-900000}
       MAX_CONCURRENT_RENDERS: ${MAX_CONCURRENT_RENDERS:-3}
       TV_AUTH_TOKEN: ${TV_AUTH_TOKEN:-}
 
