@@ -7,8 +7,8 @@
 //
 // Environment:
 //   GEMINI_API_KEY=your_api_key
-//   GEMINI_API_KEY_2, GEMINI_API_KEY_3, GEMINI_API_KEY_4 (optional) — extra
-//   keys rotated through before dropping to a weaker model. Free-tier quota
+//   GEMINI_API_KEY_2 .. GEMINI_API_KEY_11 (optional) — extra keys rotated
+//   through before dropping to a weaker model. Free-tier quota
 //   is per (key, model), so more keys buys more headroom on the strongest
 //   model rather than forcing an early downgrade in trade quality.
 //
@@ -52,11 +52,13 @@
 
 const { GoogleGenAI } = require('@google/genai');
 
+// GEMINI_API_KEY plus GEMINI_API_KEY_2 .. GEMINI_API_KEY_11 — every key is
+// rotated through for a given model tier before falling back to the next
+// (weaker) model, so 11 keys buys 11x the headroom on gemini-3.6-flash
+// before any downgrade happens.
 const API_KEYS = [
   process.env.GEMINI_API_KEY,
-  process.env.GEMINI_API_KEY_2,
-  process.env.GEMINI_API_KEY_3,
-  process.env.GEMINI_API_KEY_4,
+  ...Array.from({ length: 10 }, (_, i) => process.env[`GEMINI_API_KEY_${i + 2}`]), // _2 .. _11
 ].filter(Boolean);
 
 const clients = API_KEYS.map((apiKey) => new GoogleGenAI({ apiKey }));
@@ -99,7 +101,7 @@ function requestGemini({
 
   if (!clients.length) {
     return Promise.reject(
-      new Error('requestGemini: no GEMINI_API_KEY (or _2/_3/_4) configured')
+      new Error('requestGemini: no GEMINI_API_KEY (or _2..._11) configured')
     );
   }
 

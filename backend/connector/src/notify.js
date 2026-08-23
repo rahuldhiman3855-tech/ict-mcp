@@ -76,6 +76,10 @@ function format(signal) {
   const tfLines = timeframeLines(agents);
   const trigger = triggerLine(agents);
 
+  // Whichever step actually produced the verdict — the last stage in the chain.
+  const finalAgent = [...agents].reverse().find((a) => a.model);
+  const modelTag = finalAgent ? `  ·  ${finalAgent.model}${finalAgent.provider ? ` (${finalAgent.provider})` : ''}` : '';
+
   const lines = [
     `${arrow} ${verdict} — ${signal.label || signal.symbol}`,
     tfLines.length ? '' : null,
@@ -84,7 +88,7 @@ function format(signal) {
     trigger ? `\n${trigger}` : null,
     signal.matchedScenario ? `Setup: ${signal.matchedScenario}` : null,
     '',
-    `Verdict: ${verdict}${signal.confidence !== null && signal.confidence !== undefined && Number.isFinite(Number(signal.confidence)) ? `  ·  confidence ${Math.round(Number(signal.confidence))}%` : ''}`,
+    `Verdict: ${verdict}${signal.confidence !== null && signal.confidence !== undefined && Number.isFinite(Number(signal.confidence)) ? `  ·  confidence ${Math.round(Number(signal.confidence))}%` : ''}${modelTag}`,
     signal.entry != null ? `Entry: ${signal.entry}` : null,
     signal.stop != null ? `Stop: ${signal.stop}` : null,
     Array.isArray(signal.targets) && signal.targets.length ? `Targets: ${signal.targets.join(', ')}` : null,

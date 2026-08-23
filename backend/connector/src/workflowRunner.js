@@ -210,6 +210,8 @@ async function runOneAgent(agent, { facts, chartDataUri, htfBatch, priorOutputs,
     let usage;
     let verdict;
     let structured = null;
+    let model;
+    let provider;
 
     if (isFinal && outputSchema === 'mtf_decision') {
       const result = await llm.completeStructured({
@@ -221,6 +223,8 @@ async function runOneAgent(agent, { facts, chartDataUri, htfBatch, priorOutputs,
       usage = result.usage;
       verdict = normalizeMtfDecision(result.args);
       structured = result.args;
+      model = result.model;
+      provider = result.provider;
     } else if (isFinal) {
       // Original behavior: forced submit_verdict tool call. Gemini primary
       // for vision, Cohere primary for text (see src/llm.js).
@@ -228,6 +232,8 @@ async function runOneAgent(agent, { facts, chartDataUri, htfBatch, priorOutputs,
       output = result.output;
       usage = result.usage;
       verdict = normalizeVerdict(result.args);
+      model = result.model;
+      provider = result.provider;
     } else if (outputSchema === 'timeframe_scores') {
       const schema = agent.vision ? VISION_AGENT_SCHEMA : TEXT_AGENT_SCHEMA;
       const toolName = agent.vision ? VISION_AGENT_TOOL_NAME : TEXT_AGENT_TOOL_NAME;
@@ -240,10 +246,12 @@ async function runOneAgent(agent, { facts, chartDataUri, htfBatch, priorOutputs,
       structured = result.args;
       output = formatTimeframeScoresText(result.args);
       usage = result.usage;
+      model = result.model;
+      provider = result.provider;
     } else if (images.length) {
-      ({ output, usage } = await llm.completeVision({ ...common, images }));
+      ({ output, usage, model, provider } = await llm.completeVision({ ...common, images }));
     } else {
-      ({ output, usage } = await llm.complete(common));
+      ({ output, usage, model, provider } = await llm.complete(common));
     }
 
     return {
@@ -253,6 +261,8 @@ async function runOneAgent(agent, { facts, chartDataUri, htfBatch, priorOutputs,
       input,
       output,
       verdict,
+      model,
+      provider,
       structured,
       tokenCount: llm.countTokens(usage, agent.system_prompt + input, output),
       latencyMs: Date.now() - started,
@@ -421,7 +431,7 @@ async function runWorkflow(workflowId, { trigger = 'manual' } = {}) {
       ...parsed,
       keyLevels: mechanicalResult?.keyLevels || {},
       charts: mergedCharts,
-      agents: traces.map(({ id, label, status, input, output, structured, tokenCount, latencyMs, error }) => ({ id, label, status, input, output, structured, tokenCount, latencyMs, error })),
+      agents: traces.map(({ id, label, status, input, output, structured, tokenCount, latencyMs, error, model, provider }) => ({ id, label, status, input, output, structured, tokenCount, latencyMs, error, model, provider })),
       tokensTotal,
     });
   } catch (err) {
