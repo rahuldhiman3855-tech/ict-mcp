@@ -17,14 +17,11 @@ const MAX_CONCURRENT_RENDERS = Number(process.env.MAX_CONCURRENT_RENDERS || 3);
 app.use(cors());
 app.use(express.json({ limit: '256kb' }));
 app.use(express.static(path.join(__dirname, 'public')));
-// maxAge: 0 forces a conditional GET (If-Modified-Since) on every request
-// instead of the browser silently reusing an old fetch — a snapshot URL is
-// content-hashed by request params, not by content, so the file behind it
-// gets overwritten in place on every live re-render. A stale-friendly
-// max-age here would mean a browser never sees a re-render it wasn't
-// already loading fresh, no matter how current the server's file is.
+// Every snapshot id is unique per render (src/cache.js) and its file is
+// never overwritten, so a long browser cache lifetime is safe — the same
+// URL can never later mean different candles.
 app.use('/snapshots', express.static(cache.DIR, {
-  maxAge: 0,
+  maxAge: '15m',
   setHeaders: (res) => res.setHeader('Content-Type', 'image/png'),
 }));
 
@@ -103,7 +100,6 @@ function parseRequest(body) {
     watermark: body.watermark !== false,
     studies: studySpecs,
     annotations: annotations.parse(body.annotations),
-    live: body.live === true,
   };
 }
 
@@ -172,26 +168,7 @@ app.post('/api/chart', async (req, res) => {
   try {
     const parsed = parseRequest(req.body);
 
-    // `live` is excluded from the key: it selects freshness, it isn't an input
-    // to the image itself.
-    const { live, ...keyable } = parsed;
-    const id = cache.keyFor(keyable);
-
-    const hit = await cache.lookup(id, { bypass: live });
-    if (hit) {
-      res.json({
-        id,
-        url: `/snapshots/${id}.png`,
-        cached: true,
-        ageMs: Math.round(hit.age),
-        bytes: hit.bytes,
-        symbol: parsed.symbol,
-        interval: parsed.interval,
-        tookMs: Date.now() - started,
-      });
-      return;
-    }
-
+    const id = cache.newId();
     const { png, feed } = await buildSnapshot(parsed);
     await cache.store(id, png);
 
@@ -257,14 +234,8 @@ app.post('/api/charts/batch', async (req, res) => {
 
     const results = [];
     for (const parsed of parsedAll) {
-      const { live, ...keyable } = parsed;
-      const id = cache.keyFor(keyable);
+      const id = cache.newId();
       try {
-        const hit = await cache.lookup(id, { bypass: live });
-        if (hit) {
-          results.push({ id, url: `/snapshots/${id}.png`, cached: true, interval: parsed.interval, bytes: hit.bytes });
-          continue;
-        }
         const { png, feed } = await buildSnapshot(parsed);
         await cache.store(id, png);
         results.push({

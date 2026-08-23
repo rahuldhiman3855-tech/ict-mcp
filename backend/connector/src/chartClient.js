@@ -27,13 +27,12 @@ async function post(pathname, body) {
 
 const getBars = (symbol, interval, bars) => post('/api/bars', { symbol, interval, bars });
 
-// live: true bypasses chart-server's on-disk PNG cache. Every render here
-// backs a fresh trading decision — a workflow re-running with the same
-// symbol/interval/bars params (the common case) must never be handed
-// yesterday's candles just because the request looks identical.
-const renderChart = (payload) => post('/api/chart', { ...payload, live: true });
+// Every render is always fresh — chart-server gives each one a unique,
+// never-reused snapshot id (src/cache.js on that service), so there's no
+// cache to bypass here anymore.
+const renderChart = (payload) => post('/api/chart', payload);
 
-const renderBatch = (payload) => post('/api/charts/batch', { ...payload, live: true });
+const renderBatch = (payload) => post('/api/charts/batch', payload);
 
 /** Absolute URL for a snapshot path, for clients outside the docker network. */
 const snapshotUrl = (relative) => `${config.chartServerUrl}${relative}`;

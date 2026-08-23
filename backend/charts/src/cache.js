@@ -6,12 +6,15 @@ const fsp = require('fs/promises');
 const path = require('path');
 
 /**
- * Content-addressed PNG store.
+ * Write-once PNG store.
  *
- * The snapshot id is a hash of the normalized request, so an identical payload
- * replayed inside the TTL is served from disk instead of re-rendering. A
- * periodic sweep removes files older than the TTL so the directory cannot grow
- * without bound.
+ * Every render gets its own unique id — never a hash of the request params —
+ * so a snapshot URL is genuinely immutable: once served, its bytes never
+ * change. (An earlier params-hash scheme reused one URL across renders and
+ * silently overwrote the file behind it, which meant any HTTP cache in front
+ * of it — a browser included — could serve stale candles indefinitely.) A
+ * periodic sweep removes files older than the TTL so the directory cannot
+ * grow without bound.
  */
 
 const DIR = process.env.SNAPSHOT_DIR
@@ -23,28 +26,10 @@ const SWEEP_MS = Number(process.env.SNAPSHOT_SWEEP_MS || 5 * 60 * 1000);
 
 fs.mkdirSync(DIR, { recursive: true });
 
-/** Stable id for a render request. Key order is normalized by sorting. */
-function keyFor(spec) {
-  const json = JSON.stringify(spec, Object.keys(spec).sort());
-  return crypto.createHash('sha256').update(json).digest('hex').slice(0, 24);
-}
+/** A fresh id for one render. Never derived from the request — nothing should ever look this up before storing it. */
+const newId = () => crypto.randomBytes(12).toString('hex');
 
 const fileFor = (id) => path.join(DIR, `${id}.png`);
-
-/**
- * Return the cached file's age in ms, or null when absent/expired.
- * `live` requests bypass the cache because the newest bar keeps moving.
- */
-async function lookup(id, { bypass = false } = {}) {
-  if (bypass) return null;
-  try {
-    const stat = await fsp.stat(fileFor(id));
-    const age = Date.now() - stat.mtimeMs;
-    return age < TTL_MS ? { age, bytes: stat.size } : null;
-  } catch {
-    return null;
-  }
-}
 
 async function store(id, buffer) {
   // Write then rename so a concurrent reader never sees a partial PNG.
@@ -86,4 +71,4 @@ function startSweeper() {
   return timer;
 }
 
-module.exports = { DIR, TTL_MS, keyFor, fileFor, lookup, store, sweep, startSweeper };
+module.exports = { DIR, TTL_MS, newId, fileFor, store, sweep, startSweeper };

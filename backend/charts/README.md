@@ -90,7 +90,7 @@ legends, pane layout, the `/api/studies` list) picks it up automatically.
 
 | File | Role |
 | --- | --- |
-| `server.js` | Routing, payload validation, cache lookup, render gate |
+| `server.js` | Routing, payload validation, render gate |
 | `src/tvFeed.js` | TradingView WebSocket client (bar fetching) |
 | `src/studies.js` | Indicator maths, computed in Node |
 | `src/template.js` | Self-contained chart HTML + theme palette |

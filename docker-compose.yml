@@ -55,9 +55,9 @@ services:
       PORT: 3000
       SNAPSHOT_DIR: /app/snapshots
 
-      # 15 min — matches cache.js's own default. Every real caller now sends
-      # live:true and bypasses this anyway; this is just the near-simultaneous
-      # dedup window, not a "how stale is acceptable" knob.
+      # How long a rendered snapshot file is kept on disk before the sweeper
+      # deletes it — every render gets its own unique, never-overwritten
+      # file (src/cache.js), so this is pure disk-retention, not staleness.
       SNAPSHOT_TTL_MS: ${SNAPSHOT_TTL_MS:-900000}
       MAX_CONCURRENT_RENDERS: ${MAX_CONCURRENT_RENDERS:-3}
       TV_AUTH_TOKEN: ${TV_AUTH_TOKEN:-}
