@@ -38,14 +38,22 @@ export const orderflowAgentNode = withNodeLogging("orderflow_agent", async (stat
   return { orderflow };
 });
 
-export const consensusNode = withNodeLogging("consensus_node", async (state, config, log) => {
+/**
+ * Weighted MTF composite score + disagreement from structure/orderflow bias
+ * per timeframe. Pure by design (structure+orderflow in, consensus out) so
+ * it's reusable outside the graph — the hourly trade-review pass (see
+ * src/trading/tradeReview.js) needs the same reading of "what does the
+ * market look like right now" without running the rest of the entry graph
+ * (mechanical gate, entry-confirmation Gemini call) that it has no use for.
+ */
+export function computeConsensus(structure, orderflow) {
   const perTf = {};
   let composite = 0;
   let disagreement = 0;
 
   for (const tf of TIMEFRAMES) {
-    const s1 = state.structure[tf];
-    const s2 = state.orderflow[tf];
+    const s1 = structure[tf];
+    const s2 = orderflow[tf];
     const raw1 = s1.score * s1.confidence;
     const raw2 = s2.score * s2.confidence;
     const S = (raw1 + raw2) / 2;
@@ -54,10 +62,13 @@ export const consensusNode = withNodeLogging("consensus_node", async (state, con
     composite += w * S;
     disagreement += w * D;
     perTf[tf] = { weight: w, structure: s1.bias, orderflow: s2.bias, S: round(S), D: round(D) };
-    log.debug({ event: "consensus_tf", tf, raw1: round(raw1), raw2: round(raw2), S: round(S), D: round(D) });
   }
 
-  const result = { perTimeframe: perTf, compositeScore: round(composite, 4), disagreement: round(disagreement, 4) };
+  return { perTimeframe: perTf, compositeScore: round(composite, 4), disagreement: round(disagreement, 4) };
+}
+
+export const consensusNode = withNodeLogging("consensus_node", async (state, config, log) => {
+  const result = computeConsensus(state.structure, state.orderflow);
   log.info({ event: "consensus_computed", compositeScore: result.compositeScore, disagreement: result.disagreement });
   return { consensus: result };
 });

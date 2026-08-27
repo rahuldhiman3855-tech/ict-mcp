@@ -67,21 +67,46 @@ function outcomeFor(position, price) {
   return null;
 }
 
-function pnlPct(position, exitPrice) {
+export function pnlPct(position, exitPrice) {
   const entryMid = (position.entryZone[0] + position.entryZone[1]) / 2;
   const raw = (exitPrice - entryMid) / entryMid;
   return position.action === "BUY" ? raw * 100 : -raw * 100;
 }
 
 /**
+ * Close one open position by id and persist it. Shared by markToMarket
+ * (stop/TP1 hit) and the hourly trade-review pass (Gemini EXIT verdict) so
+ * every close goes through one place — `closeReason` is what tells them
+ * apart afterwards in the ledger.
+ */
+export function closePosition(id, { outcome, exitPrice, pnlPct: pnl, closeReason }, log) {
+  const positions = readLedger();
+  const position = positions.find((p) => p.id === id && p.status === "open");
+  if (!position) return null;
+
+  position.status = "closed";
+  position.outcome = outcome;
+  position.exitPrice = exitPrice;
+  position.pnlPct = pnl;
+  position.closeReason = closeReason;
+  position.closedAt = new Date().toISOString();
+  writeLedger(positions);
+
+  log?.info(
+    { event: "paper_trade_closed", id: position.id, outcome, pnlPct: position.pnlPct, closeReason },
+    `paper trade ${position.id.slice(0, 8)} closed: ${outcome} (${position.pnlPct}%) [${closeReason}]`
+  );
+  return position;
+}
+
+/**
  * Fetch the current price for every open position's symbol (deduped) and
- * close any position whose stop or TP1 has been hit. Returns the full,
- * updated ledger.
+ * close any position whose stop or TP1 has been hit. Returns the current
+ * ledger (post-close).
  */
 export async function markToMarket(log) {
-  const positions = readLedger();
-  const open = positions.filter((p) => p.status === "open");
-  if (!open.length) return positions;
+  const open = readLedger().filter((p) => p.status === "open");
+  if (!open.length) return [];
 
   // One symbol's feed hiccup shouldn't stop the rest from being checked —
   // it's just skipped this pass and picked up again on the next one.
@@ -101,19 +126,19 @@ export async function markToMarket(log) {
     const outcome = outcomeFor(position, price);
     if (!outcome) continue;
 
-    position.status = "closed";
-    position.outcome = outcome;
-    position.exitPrice = price;
-    position.pnlPct = Math.round(pnlPct(position, price) * 100) / 100;
-    position.closedAt = new Date().toISOString();
-    log?.info(
-      { event: "paper_trade_closed", id: position.id, outcome, pnlPct: position.pnlPct },
-      `paper trade ${position.id.slice(0, 8)} closed: ${outcome} (${position.pnlPct}%)`
+    closePosition(
+      position.id,
+      {
+        outcome,
+        exitPrice: price,
+        pnlPct: Math.round(pnlPct(position, price) * 100) / 100,
+        closeReason: outcome === "WIN" ? "take_profit1" : "stop_loss",
+      },
+      log
     );
   }
 
-  writeLedger(positions);
-  return positions;
+  return readLedger();
 }
 
 export function summarize(positions = readLedger()) {

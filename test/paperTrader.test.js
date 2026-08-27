@@ -9,7 +9,7 @@ import path from "node:path";
 // ahead of this.
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "ict-paper-trader-test-"));
 process.env.ICT_DATA_DIR = tmpDir;
-const { openPosition, hasOpenPosition, summarize, readLedger, LEDGER_PATH } = await import(
+const { openPosition, hasOpenPosition, summarize, readLedger, closePosition, LEDGER_PATH } = await import(
   "../src/trading/paperTrader.js"
 );
 
@@ -75,5 +75,25 @@ describe("paperTrader", () => {
 
   test("summarize returns null win rate with no closed trades", () => {
     assert.equal(summarize([{ status: "open" }]).winRate, null);
+  });
+
+  test("closePosition closes an open position by id and records closeReason", () => {
+    const position = openPosition(
+      { action: "BUY", entryZone: [100, 102], stopLoss: 99, takeProfit1: 110, takeProfit2: 115, rewardRiskRatio: 5 },
+      "BITSTAMP:BTCUSD"
+    );
+    const closed = closePosition(position.id, {
+      outcome: "WIN",
+      exitPrice: 105,
+      pnlPct: 3.5,
+      closeReason: "gemini_review_exit",
+    });
+    assert.equal(closed.status, "closed");
+    assert.equal(closed.closeReason, "gemini_review_exit");
+    assert.equal(readLedger().find((p) => p.id === position.id).status, "closed");
+  });
+
+  test("closePosition is a no-op for an id that isn't open", () => {
+    assert.equal(closePosition("does-not-exist", { outcome: "WIN", exitPrice: 1, pnlPct: 1, closeReason: "x" }), null);
   });
 });
