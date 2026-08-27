@@ -43,7 +43,7 @@ npm run check-trades        # mark-to-market pass over the paper-trading ledger
 npm run watch                # runs forever: WATCHLIST every WATCH_INTERVAL_MS, alerts to Telegram (use PM2 instead in production)
 ```
 
-`SYMBOL` (default `BITSTAMP:BTCUSD`) and `CHART_SERVER_URL` (default
+`SYMBOL` (default `OCTAFX:BTCUSD`) and `CHART_SERVER_URL` (default
 `http://localhost:3000`) are also read from the environment — see
 `src/config.js` for every knob.
 

@@ -19,17 +19,17 @@ export const TF_FEED_PARAMS = {
   "15m": { interval: "15", bars: 300 },
 };
 
-export const SYMBOL = process.env.SYMBOL || "BITSTAMP:BTCUSD";
+export const SYMBOL = process.env.SYMBOL || "OCTAFX:BTCUSD";
 export const CHART_SERVER_URL = process.env.CHART_SERVER_URL || "http://localhost:3000";
 
 /** The full 20-instrument watchlist — the default, and the source shard split for multi-server deploys. */
 const DEFAULT_WATCHLIST = [
   // Crypto
-  "BITSTAMP:BTCUSD",
-  "BITSTAMP:ETHUSD",
-  "BINANCE:SOLUSDT",
-  "BINANCE:BNBUSDT",
-  "BINANCE:XRPUSDT",
+  "OCTAFX:BTCUSD",
+  "OCTAFX:ETHUSD",
+  "OCTAFX:XRPUSD",
+  "OCTAFX:LTCUSD",
+  "OCTAFX:BCHUSD",
   // FX majors + crosses
   "FX:EURUSD",
   "FX:GBPUSD",

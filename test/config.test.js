@@ -15,6 +15,7 @@ describe("config invariants", () => {
   test("WATCHLIST has exactly 20 unique EXCHANGE:TICKER symbols", () => {
     assert.equal(WATCHLIST.length, 20);
     assert.equal(new Set(WATCHLIST).size, 20, "WATCHLIST has duplicates");
+    assert.ok(WATCHLIST.every((symbol) => !symbol.includes("USDT")), "WATCHLIST must use OctaFX-compatible USD symbols");
     // EXCHANGE:TICKER — exchange casing varies in the wild (BITSTAMP vs
     // Pepperstone vs Capital.com), so this only checks the shape, not case.
     for (const symbol of WATCHLIST) assert.match(symbol, /^[A-Za-z.]+:[A-Z0-9!]+$/);
