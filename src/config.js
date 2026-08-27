@@ -110,7 +110,17 @@ export function parseGeminiKeys(env) {
 export const GEMINI_API_KEYS = parseGeminiKeys(process.env);
 
 export const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
-export const GEMINI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS || 15000);
+export const GEMINI_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS || 8000);
+
+/**
+ * Cap on how many keys a single getGeminiVerdict() call walks through before
+ * giving up. Left uncapped (10 keys x 15s timeout), one bad Gemini window
+ * could stretch a single watch-loop cycle by up to 150s (observed: a 166s
+ * cycle on 2026-08-25 traced to exactly this). Capping to 3 bounds the
+ * worst case to 3 x GEMINI_TIMEOUT_MS while the round-robin cursor still
+ * advances globally, so different keys get tried across calls over time.
+ */
+export const GEMINI_MAX_KEY_ATTEMPTS = Number(process.env.GEMINI_MAX_KEY_ATTEMPTS || 3);
 
 export const PAPER_TRADING_ENABLED = process.env.PAPER_TRADING !== "false";
 

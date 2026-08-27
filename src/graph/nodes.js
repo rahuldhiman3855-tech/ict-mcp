@@ -200,16 +200,25 @@ export const geminiVerdictNode = withNodeLogging("gemini_verdict", async (state,
  * Only reached when the mechanical gate already said "trade" — can veto it,
  * never originate one. Pure: mechanical reason + gemini verdict in,
  * {route, reason} out.
+ *
+ * CONFIRM is the only verdict that lets a mechanical "trade" through. VETO
+ * and NEUTRAL (including Gemini being unavailable/timed out) both sit out —
+ * live paper-trading data showed NEUTRAL-verdict trades (Gemini genuinely
+ * undecided, not just outages) at a 0% win rate vs. 50% for CONFIRM trades
+ * over the same window, so "no confirmation" is not a safe default to trade
+ * on.
  */
 export function evaluateFinalGate(mechanicalReason, gemini) {
   if (gemini.verdict === "VETO") {
     return { route: "wait", reason: `Mechanical edge present, but Gemini vetoed: ${gemini.reasoning}` };
   }
 
-  const reason = gemini.verdict === "CONFIRM"
-    ? `${mechanicalReason} Gemini confirmed: ${gemini.reasoning}`
-    : `${mechanicalReason} Gemini neutral/unavailable.`;
-  return { route: "trade", reason };
+  if (gemini.verdict !== "CONFIRM") {
+    const why = gemini.unavailable ? `Gemini unavailable: ${gemini.reasoning}` : `Gemini neutral: ${gemini.reasoning}`;
+    return { route: "wait", reason: `Mechanical edge present, but no Gemini confirmation (${why}) — sitting out.` };
+  }
+
+  return { route: "trade", reason: `${mechanicalReason} Gemini confirmed: ${gemini.reasoning}` };
 }
 
 export const finalGateNode = withNodeLogging("final_gate", async (state, config, log) => {

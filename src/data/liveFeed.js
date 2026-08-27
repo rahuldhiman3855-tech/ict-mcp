@@ -6,16 +6,43 @@
 
 import { CHART_SERVER_URL, TF_FEED_PARAMS, TIMEFRAMES } from "../config.js";
 
-async function fetchBars(symbol, timeframe, barsOverride) {
+const RETRYABLE_STATUS = new Set([502, 503, 504]);
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * One retry, after a short delay, on a transient charts-service failure —
+ * a scraper-side TradingView connection drop/timeout (502) or a network
+ * error reaching the charts service itself. These showed up intermittently
+ * in production (e.g. "Timed out after 20000ms waiting for <symbol> data"),
+ * each one dropping that symbol from the whole watch cycle. A non-retryable
+ * failure (4xx, empty bars) still throws immediately.
+ */
+async function fetchBars(symbol, timeframe, barsOverride, attempt = 1) {
   const { interval, bars } = TF_FEED_PARAMS[timeframe];
-  const res = await fetch(`${CHART_SERVER_URL}/api/bars`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ symbol, interval, bars: barsOverride ?? bars }),
-  });
+  let res;
+  try {
+    res = await fetch(`${CHART_SERVER_URL}/api/bars`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ symbol, interval, bars: barsOverride ?? bars }),
+    });
+  } catch (err) {
+    if (attempt < 2) {
+      await sleep(1500);
+      return fetchBars(symbol, timeframe, barsOverride, attempt + 1);
+    }
+    throw err;
+  }
 
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
+    if (RETRYABLE_STATUS.has(res.status) && attempt < 2) {
+      await sleep(1500);
+      return fetchBars(symbol, timeframe, barsOverride, attempt + 1);
+    }
     throw new Error(`charts service /api/bars ${timeframe} failed (${res.status}): ${body.error || res.statusText}`);
   }
   if (!body.bars?.length) throw new Error(`charts service returned no bars for ${symbol} ${timeframe}`);

@@ -21,7 +21,7 @@
  * it fall through to the next key).
  */
 
-import { GEMINI_API_KEYS, GEMINI_MODEL, GEMINI_TIMEOUT_MS } from "../config.js";
+import { GEMINI_API_KEYS, GEMINI_MODEL, GEMINI_TIMEOUT_MS, GEMINI_MAX_KEY_ATTEMPTS } from "../config.js";
 import { langfuseHandler } from "../tracing.js";
 
 const VERDICT_SCHEMA = {
@@ -150,7 +150,8 @@ export async function getGeminiVerdict(context, log) {
   const start = nextStart();
   let lastErr;
 
-  for (let i = 0; i < GEMINI_API_KEYS.length; i++) {
+  const attempts = Math.min(GEMINI_API_KEYS.length, GEMINI_MAX_KEY_ATTEMPTS);
+  for (let i = 0; i < attempts; i++) {
     const keyIndex = (start + i) % GEMINI_API_KEYS.length;
     const startTime = new Date();
     try {
@@ -168,8 +169,8 @@ export async function getGeminiVerdict(context, log) {
   log?.error({ event: "gemini_all_keys_failed", err: lastErr?.message }, "all Gemini keys failed, degrading to NEUTRAL");
   return {
     verdict: "NEUTRAL",
-    reasoning: `Gemini unavailable after trying all ${GEMINI_API_KEYS.length} keys: ${lastErr?.message}`,
+    reasoning: `Gemini unavailable after trying ${attempts} of ${GEMINI_API_KEYS.length} keys: ${lastErr?.message}`,
     unavailable: true,
-    keysAttempted: GEMINI_API_KEYS.length,
+    keysAttempted: attempts,
   };
 }

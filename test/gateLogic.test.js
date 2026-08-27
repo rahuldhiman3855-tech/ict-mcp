@@ -82,10 +82,21 @@ describe("evaluateFinalGate", () => {
     assert.match(reason, /Gemini confirmed: aligned/);
   });
 
-  test("NEUTRAL (including 'unavailable') still passes the mechanical trade through", () => {
-    const { route, reason } = evaluateFinalGate("mechanical ok.", { verdict: "NEUTRAL", unavailable: true });
-    assert.equal(route, "trade");
-    assert.match(reason, /neutral\/unavailable/);
+  test("NEUTRAL sits out even though the mechanical gate found a trade", () => {
+    const { route, reason } = evaluateFinalGate("mechanical ok.", { verdict: "NEUTRAL", reasoning: "unclear setup" });
+    assert.equal(route, "wait");
+    assert.match(reason, /no Gemini confirmation/);
+    assert.match(reason, /Gemini neutral/);
+  });
+
+  test("Gemini unavailable (degraded to NEUTRAL) also sits out, not trades", () => {
+    const { route, reason } = evaluateFinalGate("mechanical ok.", {
+      verdict: "NEUTRAL",
+      reasoning: "timed out",
+      unavailable: true,
+    });
+    assert.equal(route, "wait");
+    assert.match(reason, /Gemini unavailable/);
   });
 });
 
