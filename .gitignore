@@ -1,7 +1,3 @@
 node_modules/
-charts/node_modules/
-charts/snapshots/
-logs/
-data/*.jsonl
 .env
-.pm2/
+logs/
