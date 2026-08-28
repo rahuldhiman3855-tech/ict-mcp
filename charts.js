@@ -1416,10 +1416,23 @@ async function startStdio() {
   await server.connect(transport);
 }
 
-async function startHttp(port) {
+async function startHttp(port, host) {
   const express = (await import('express')).default;
   const app = express();
   app.use(express.json({ limit: '1mb' }));
+
+  // Optional shared-secret gate. Off by default (local/private use); set
+  // MCP_AUTH_TOKEN once this is reachable from the public internet — the
+  // tools behind it drive real Chromium renders and a rate-limited upstream
+  // feed, and an unauthenticated public endpoint is an open invitation to
+  // exhaust both.
+  const authToken = process.env.MCP_AUTH_TOKEN;
+  if (authToken) {
+    app.use('/mcp', (req, res, next) => {
+      if (req.get('authorization') === `Bearer ${authToken}`) return next();
+      res.status(401).json({ jsonrpc: '2.0', error: { code: -32001, message: 'Unauthorized' }, id: null });
+    });
+  }
 
   app.post('/mcp', async (req, res) => {
     const server = createServer();
@@ -1446,8 +1459,8 @@ async function startHttp(port) {
   app.get('/health', (_req, res) => res.json({ ok: true, uptimeSec: Math.round(process.uptime()) }));
 
   await new Promise((resolve) => {
-    httpServer = app.listen(port, () => {
-      console.log(`charts MCP server listening on http://localhost:${port}/mcp`);
+    httpServer = app.listen(port, host, () => {
+      console.log(`charts MCP server listening on http://${host}:${port}/mcp`);
       resolve();
     });
   });
@@ -1462,7 +1475,9 @@ process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
 const useHttp = process.env.MCP_TRANSPORT === 'http';
-const main = useHttp ? () => startHttp(Number(process.env.PORT || 3000)) : startStdio;
+const main = useHttp
+  ? () => startHttp(Number(process.env.PORT || 3000), process.env.HOST || '127.0.0.1')
+  : startStdio;
 
 main().catch((err) => {
   console.error('fatal:', err);

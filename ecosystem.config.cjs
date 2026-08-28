@@ -12,8 +12,12 @@ module.exports = {
       interpreter: "node",
       env: {
         MCP_TRANSPORT: "http",
+        HOST: "127.0.0.1",
         PORT: "3000",
       },
+      // Secrets (MCP_AUTH_TOKEN, TV_AUTH_TOKEN) live in .env, not here —
+      // this file is safe to keep in git, .env is not.
+      node_args: "--env-file-if-exists=.env",
       autorestart: true,
       restart_delay: 5000,
       max_restarts: 20,
